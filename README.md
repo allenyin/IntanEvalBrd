@@ -1,6 +1,6 @@
 Modified from [Intan C++/Qt source code for RHD2000 interface software, version 1.5](http://www.intantech.com/files/RHD2000interface_source_code_v1_5.zip)
 
-** Compiling unmodified Intan evaluation board software **
+**Compiling unmodified Intan evaluation board software**
 Steps to compile on Ubuntu 14.04 (starting from fresh download from Intan), some steps taken from Intan_README.txt
 
 1. Navigate to `source/`
@@ -33,7 +33,7 @@ All versions of bitfiles for the FPGA live in `bitfiles/`.
 
 `originaIntanMain.bit` is the `main.bit` file that comes from their website. Before running the evaluation board, one of the bit files must be copied to the source directory and renamed to `main.bit`.
 
-** Modified Interface Software **
+**Modified Interface Software**
 
 To compile the modified interface software:
 
