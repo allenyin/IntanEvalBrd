@@ -7,7 +7,7 @@
 //
 //------------------------------------------------------------------------
 // Copyright (c) 2005-2010 Opal Kelly Incorporated
-// $Rev: 1283 $ $Date: 2012-11-06 10:38:53 -0800 (Tue, 06 Nov 2012) $
+// $Rev: 1911 $ $Date: 2013-12-29 14:03:17 -0800 (Sun, 29 Dec 2013) $
 //------------------------------------------------------------------------
 
 #ifndef __okFrontPanelDLL_h__
@@ -42,12 +42,17 @@ typedef void (* DLL_EP)(void);
 
 #ifdef __cplusplus
 #include <string>
+#include <vector>
+
 extern "C" {
 #endif // __cplusplus
 
 typedef void* okPLL22150_HANDLE;
 typedef void* okPLL22393_HANDLE;
+typedef struct okDeviceSettingsHandle* okDeviceSettings_HANDLE;
 typedef void* okFrontPanel_HANDLE;
+typedef struct okFrontPanelManagerHandle* okFrontPanelManager_HANDLE;
+typedef struct okCFrontPanelManagerHandle* okCFrontPanelManager_HANDLE;
 typedef int Bool;
 
 #define MAX_SERIALNUMBER_LENGTH      10       // 10 characters + Does NOT include termination NULL.
@@ -112,7 +117,10 @@ typedef enum {
 	ok_brdXEM6110v2LX150=24,
 	ok_brdXEM6002LX9=25,
 	ok_brdXEM6310MTLX45T=26,
-	ok_brdXEM6320LX130T=27
+	ok_brdXEM6320LX130T=27,
+	ok_brdXEM7350K70T=28,
+	ok_brdXEM7350K160T=29,
+	ok_brdXEM7350K410T=30
 } ok_BoardModel;
 
 typedef enum {
@@ -186,28 +194,35 @@ typedef enum {
 #define OK_PRODUCT_XEM6002LX9               (25)
 #define OK_PRODUCT_XEM6310MTLX45            (26)
 #define OK_PRODUCT_XEM6320LX130T            (27)
+#define OK_PRODUCT_XEM7350K70T              (28)
+#define OK_PRODUCT_XEM7350K160T             (29)
+#define OK_PRODUCT_XEM7350K410T             (30)
+
+// ok_FPGAConfigurationMethod types
+#define OK_FPGACONFIGURATIONMETHOD_NVRAM    (0)
+#define OK_FPGACONFIGURATIONMETHOD_JTAG     (1)
+enum okEFPGAConfigurationMethod {
+	ok_FPGAConfigurationMethod_NVRAM = OK_FPGACONFIGURATIONMETHOD_NVRAM,
+	ok_FPGAConfigurationMethod_JTAG  = OK_FPGACONFIGURATIONMETHOD_JTAG
+};
 
 
-typedef struct okRegisterEntry {
+typedef struct {
 	UINT32   address;
 	UINT32   data;
 } okTRegisterEntry;
 
+#ifdef __cplusplus
+typedef std::vector<okTRegisterEntry> okTRegisterEntries;
+#endif // __cplusplus
 
-#define okREGISTER_SET_ENTRIES       (64)
-typedef struct okFPGARegisterSet {
-	UINT32            count;
-	okTRegisterEntry  entries[okREGISTER_SET_ENTRIES];
-} okTRegisterSet;
-
-
-typedef struct okTriggerEntry {
+typedef struct {
 	UINT32   address;
 	UINT32   mask;
 } okTTriggerEntry;
 
 
-typedef struct okFPGAResetProfile {
+typedef struct {
 	// Magic number indicating the profile is valid.  (4 byte = 0xBE097C3D)
 	UINT32                     magic;
 
@@ -275,9 +290,15 @@ typedef struct {
 	int             deviceMinorVersion;
 	int             hostInterfaceMajorVersion;
 	int             hostInterfaceMinorVersion;
+#ifdef __cplusplus
 	bool            isPLL22150Supported;
 	bool            isPLL22393Supported;
 	bool            isFrontPanelEnabled;
+#else // __cplusplus
+	char            isPLL22150Supported;
+	char            isPLL22393Supported;
+	char            isFrontPanelEnabled;
+#endif // __cplusplus
 	int             wireWidth;
 	int             triggerWidth;
 	int             pipeWidth;
@@ -288,7 +309,7 @@ typedef struct {
 	okTFlashLayout  flashFPGA;
 } okTDeviceInfo;
 
-#endif
+#endif // ! FRONTPANELDLL_EXPORTS
 
 //
 // Define the LoadLib and FreeLib methods for the IMPORT side.
@@ -296,7 +317,7 @@ typedef struct {
 #ifndef FRONTPANELDLL_EXPORTS
 	Bool okFrontPanelDLL_LoadLib(okFP_dll_pchar libname);
 	void okFrontPanelDLL_FreeLib(void);
-#endif
+#endif // ! FRONTPANELDLL_EXPORTS
 
 //
 // General
@@ -356,6 +377,18 @@ okDLLEXPORT void DLL_ENTRY okPLL22150_GetProgrammingInfo(okPLL22150_HANDLE pll, 
 
 
 //
+// okDeviceSettings
+//
+okDLLEXPORT okDeviceSettings_HANDLE DLL_ENTRY okDeviceSettings_Construct();
+okDLLEXPORT void DLL_ENTRY okDeviceSettings_Destruct(okDeviceSettings_HANDLE hnd);
+okDLLEXPORT ok_ErrorCode DLL_ENTRY okDeviceSettings_GetString(okDeviceSettings_HANDLE hnd, const char *key, int length, char *buf);
+okDLLEXPORT ok_ErrorCode DLL_ENTRY okDeviceSettings_SetString(okDeviceSettings_HANDLE hnd, const char *key, const char *buf);
+okDLLEXPORT ok_ErrorCode DLL_ENTRY okDeviceSettings_GetInt(okDeviceSettings_HANDLE hnd, const char *key, UINT32 *value);
+okDLLEXPORT ok_ErrorCode DLL_ENTRY okDeviceSettings_SetInt(okDeviceSettings_HANDLE hnd, const char *key, UINT32 value);
+okDLLEXPORT ok_ErrorCode DLL_ENTRY okDeviceSettings_Delete(okDeviceSettings_HANDLE hnd, const char *key);
+okDLLEXPORT ok_ErrorCode DLL_ENTRY okDeviceSettings_Save(okDeviceSettings_HANDLE hnd);
+
+//
 // okFrontPanel
 //
 okDLLEXPORT okFrontPanel_HANDLE DLL_ENTRY okFrontPanel_Construct();
@@ -365,14 +398,12 @@ okDLLEXPORT ok_ErrorCode DLL_ENTRY okFrontPanel_ReadI2C(okFrontPanel_HANDLE hnd,
 okDLLEXPORT ok_ErrorCode DLL_ENTRY okFrontPanel_FlashEraseSector(okFrontPanel_HANDLE hnd, UINT32 address);
 okDLLEXPORT ok_ErrorCode DLL_ENTRY okFrontPanel_FlashWrite(okFrontPanel_HANDLE hnd, UINT32 address, UINT32 length, const UINT8 *buf);
 okDLLEXPORT ok_ErrorCode DLL_ENTRY okFrontPanel_FlashRead(okFrontPanel_HANDLE hnd, UINT32 address, UINT32 length, UINT8 *buf);
-okDLLEXPORT ok_ErrorCode DLL_ENTRY okFrontPanel_GetFPGABootResetProfile(okFrontPanel_HANDLE hnd, okTFPGAResetProfile *profile);
-okDLLEXPORT ok_ErrorCode DLL_ENTRY okFrontPanel_GetFPGAJTAGResetProfile(okFrontPanel_HANDLE hnd, okTFPGAResetProfile *profile);
-okDLLEXPORT ok_ErrorCode DLL_ENTRY okFrontPanel_SetFPGABootResetProfile(okFrontPanel_HANDLE hnd, okTFPGAResetProfile *profile);
-okDLLEXPORT ok_ErrorCode DLL_ENTRY okFrontPanel_SetFPGAJTAGResetProfile(okFrontPanel_HANDLE hnd, okTFPGAResetProfile *profile);
+okDLLEXPORT ok_ErrorCode DLL_ENTRY okFrontPanel_GetFPGAResetProfile(okFrontPanel_HANDLE hnd, okEFPGAConfigurationMethod method, okTFPGAResetProfile *profile);
+okDLLEXPORT ok_ErrorCode DLL_ENTRY okFrontPanel_SetFPGAResetProfile(okFrontPanel_HANDLE hnd, okEFPGAConfigurationMethod method, const okTFPGAResetProfile *profile);
 okDLLEXPORT ok_ErrorCode DLL_ENTRY okFrontPanel_ReadRegister(okFrontPanel_HANDLE hnd, UINT32 addr, UINT32 *data);
-okDLLEXPORT ok_ErrorCode DLL_ENTRY okFrontPanel_ReadRegisterSet(okFrontPanel_HANDLE hnd, okTRegisterSet *set);
+okDLLEXPORT ok_ErrorCode DLL_ENTRY okFrontPanel_ReadRegisters(okFrontPanel_HANDLE hnd, unsigned num, okTRegisterEntry* regs);
 okDLLEXPORT ok_ErrorCode DLL_ENTRY okFrontPanel_WriteRegister(okFrontPanel_HANDLE hnd, UINT32 addr, UINT32 data);
-okDLLEXPORT ok_ErrorCode DLL_ENTRY okFrontPanel_WriteRegisterSet(okFrontPanel_HANDLE hnd, okTRegisterSet *set);
+okDLLEXPORT ok_ErrorCode DLL_ENTRY okFrontPanel_WriteRegisters(okFrontPanel_HANDLE hnd, unsigned num, const okTRegisterEntry* regs);
 okDLLEXPORT int DLL_ENTRY okFrontPanel_GetHostInterfaceWidth(okFrontPanel_HANDLE hnd);
 okDLLEXPORT Bool DLL_ENTRY okFrontPanel_IsHighSpeed(okFrontPanel_HANDLE hnd);
 okDLLEXPORT ok_BoardModel DLL_ENTRY okFrontPanel_GetBoardModel(okFrontPanel_HANDLE hnd);
@@ -388,7 +419,9 @@ okDLLEXPORT void DLL_ENTRY okFrontPanel_SetTimeout(okFrontPanel_HANDLE hnd, int 
 okDLLEXPORT int DLL_ENTRY okFrontPanel_GetDeviceMajorVersion(okFrontPanel_HANDLE hnd);
 okDLLEXPORT int DLL_ENTRY okFrontPanel_GetDeviceMinorVersion(okFrontPanel_HANDLE hnd);
 okDLLEXPORT ok_ErrorCode DLL_ENTRY okFrontPanel_ResetFPGA(okFrontPanel_HANDLE hnd);
+okDLLEXPORT void DLL_ENTRY okFrontPanel_Close(okFrontPanel_HANDLE hnd);
 okDLLEXPORT void DLL_ENTRY okFrontPanel_GetSerialNumber(okFrontPanel_HANDLE hnd, char *buf);
+okDLLEXPORT ok_ErrorCode DLL_ENTRY okFrontPanel_GetDeviceSettings(okFrontPanel_HANDLE hnd, okDeviceSettings_HANDLE settings);
 okDLLEXPORT ok_ErrorCode DLL_ENTRY okFrontPanel_GetDeviceInfo(okFrontPanel_HANDLE hnd, okTDeviceInfo *info);
 okDLLEXPORT void DLL_ENTRY okFrontPanel_GetDeviceID(okFrontPanel_HANDLE hnd, char *buf);
 okDLLEXPORT void DLL_ENTRY okFrontPanel_SetDeviceID(okFrontPanel_HANDLE hnd, const char *strID);
@@ -420,8 +453,17 @@ okDLLEXPORT long DLL_ENTRY okFrontPanel_WriteToBlockPipeIn(okFrontPanel_HANDLE h
 okDLLEXPORT long DLL_ENTRY okFrontPanel_ReadFromBlockPipeOut(okFrontPanel_HANDLE hnd, int epAddr, int blockSize, long length, unsigned char *data);
 
 
+//
+// okFrontPanelManager
+//
+okDLLEXPORT okCFrontPanelManager_HANDLE DLL_ENTRY okFrontPanelManager_Construct(okFrontPanelManager_HANDLE self);
+okDLLEXPORT void DLL_ENTRY okFrontPanelManager_Destruct(okCFrontPanelManager_HANDLE hnd);
+okDLLEXPORT ok_ErrorCode DLL_ENTRY okFrontPanelManager_StartMonitoring(okCFrontPanelManager_HANDLE hnd);
+okDLLEXPORT okFrontPanel_HANDLE DLL_ENTRY okFrontPanelManager_Open(okCFrontPanelManager_HANDLE hnd, const char *serial);
+
 #ifdef __cplusplus
 #if !defined(FRONTPANELDLL_EXPORTS)
+
 //------------------------------------------------------------------------
 // okCPLL22150 C++ wrapper class
 //------------------------------------------------------------------------
@@ -511,6 +553,9 @@ public:
 //------------------------------------------------------------------------
 // okCFrontPanel C++ wrapper class
 //------------------------------------------------------------------------
+
+class okCDeviceSettings;
+
 class okCFrontPanel
 {
 public:
@@ -540,7 +585,13 @@ public:
 		brdXEM6310LX45=21,
 		brdXEM6310LX150=22,
 		brdXEM6110v2LX45=23,
-		brdXEM6110v2LX150=24
+		brdXEM6110v2LX150=24,
+		brdXEM6002LX9=25,
+		brdXEM6310MTLX45=26,
+		brdXEM6320LX130T=27,
+		brdXEM7350K70T=28,
+		brdXEM7350K160T=29,
+		brdXEM7350K410T=30
 	};
 	enum ErrorCode {
 		NoError                    = 0,
@@ -568,6 +619,10 @@ public:
 private:
 	bool to_bool(Bool x);
 	Bool from_bool(bool x);
+
+	explicit okCFrontPanel(okFrontPanel_HANDLE hnd);
+	friend class okCFrontPanelManager;
+
 public:
 	okCFrontPanel();
 	~okCFrontPanel();
@@ -575,17 +630,15 @@ public:
 	BoardModel GetBoardModel();
 	std::string GetBoardModelString(BoardModel m);
 	int GetDeviceCount();
-	ErrorCode GetFPGABootResetProfile(okTFPGAResetProfile *profile);
-	ErrorCode GetFPGAJTAGResetProfile(okTFPGAResetProfile *profile);
-	ErrorCode SetFPGABootResetProfile(okTFPGAResetProfile *profile);
-	ErrorCode SetFPGAJTAGResetProfile(okTFPGAResetProfile *profile);
+	ErrorCode GetFPGAResetProfile(okEFPGAConfigurationMethod method, okTFPGAResetProfile *profile);
+	ErrorCode SetFPGAResetProfile(okEFPGAConfigurationMethod method, const okTFPGAResetProfile *profile);
 	ErrorCode FlashEraseSector(UINT32 address);
 	ErrorCode FlashWrite(UINT32 address, UINT32 length, const UINT8 *buf);
 	ErrorCode FlashRead(UINT32 address, UINT32 length, UINT8 *buf);
 	ErrorCode ReadRegister(UINT32 addr, UINT32 *data);
-	ErrorCode ReadRegisterSet(okTRegisterSet *set);
+	ErrorCode ReadRegisters(okTRegisterEntries& regs);
 	ErrorCode WriteRegister(UINT32 addr, UINT32 data);
-	ErrorCode WriteRegisterSet(okTRegisterSet *set);
+	ErrorCode WriteRegisters(const okTRegisterEntries& regs);
 	BoardModel GetDeviceListModel(int num);
 	std::string GetDeviceListSerial(int num);
 	void EnableAsynchronousTransfers(bool enable);
@@ -595,11 +648,13 @@ public:
 	int GetDeviceMajorVersion();
 	int GetDeviceMinorVersion();
 	std::string GetSerialNumber();
+	ErrorCode GetDeviceSettings(okCDeviceSettings& settings);
 	std::string GetDeviceID();
 	void SetDeviceID(const std::string str);
 	ErrorCode SetBTPipePollingInterval(int interval);
 	void SetTimeout(int timeout);
 	ErrorCode ResetFPGA();
+	void Close();
 	ErrorCode ConfigureFPGAFromMemory(unsigned char *data, const unsigned long length,
 				void(*callback)(int, int, void *) = NULL, void *arg = NULL);
 	ErrorCode ConfigureFPGA(const std::string strFilename,
@@ -620,18 +675,187 @@ public:
 	bool IsFrontPanel3Supported();
 	void UpdateWireIns();
 	ErrorCode GetWireInValue(int epAddr, UINT32 *val);
-	ErrorCode SetWireInValue(int ep, unsigned long val, unsigned long mask = 0xffffffff);
+	ErrorCode SetWireInValue(int ep, UINT32 val, UINT32 mask = 0xffffffff);
 	void UpdateWireOuts();
 	unsigned long GetWireOutValue(int epAddr);
 	ErrorCode ActivateTriggerIn(int epAddr, int bit);
 	void UpdateTriggerOuts();
-	bool IsTriggered(int epAddr, unsigned long mask);
+	bool IsTriggered(int epAddr, UINT32 mask);
 	long GetLastTransferLength();
 	long WriteToPipeIn(int epAddr, long length, unsigned char *data);
 	long ReadFromPipeOut(int epAddr, long length, unsigned char *data);
 	long WriteToBlockPipeIn(int epAddr, int blockSize, long length, unsigned char *data);
 	long ReadFromBlockPipeOut(int epAddr, int blockSize, long length, unsigned char *data);
 };
+
+class okCDeviceSettings
+{
+public:
+	okCDeviceSettings()
+	{
+		h = okDeviceSettings_Construct();
+	}
+
+	~okCDeviceSettings()
+	{
+		okDeviceSettings_Destruct(h);
+	}
+
+	okCFrontPanel::ErrorCode GetString(const std::string& key, std::string* value)
+	{
+		char buf[256];
+		ok_ErrorCode rc = okDeviceSettings_GetString(h, key.c_str(), sizeof(buf), buf);
+		if (rc == ok_NoError) {
+			if (!value)
+				rc = ok_InvalidParameter;
+			else
+				value->assign(buf);
+		}
+
+		return static_cast<okCFrontPanel::ErrorCode>(rc);
+	}
+
+	okCFrontPanel::ErrorCode GetInt(const std::string& key, UINT32* value)
+	{
+		return static_cast<okCFrontPanel::ErrorCode>(
+					okDeviceSettings_GetInt(h, key.c_str(), value)
+				);
+	}
+
+	okCFrontPanel::ErrorCode SetString(const std::string& key, const std::string& value)
+	{
+		return static_cast<okCFrontPanel::ErrorCode>(
+					okDeviceSettings_SetString(h, key.c_str(), value.c_str())
+				);
+	}
+
+	okCFrontPanel::ErrorCode SetInt(const std::string& key, UINT32 value)
+	{
+		return static_cast<okCFrontPanel::ErrorCode>(
+					okDeviceSettings_SetInt(h, key.c_str(), value)
+				);
+	}
+
+	okCFrontPanel::ErrorCode Delete(const std::string& key)
+	{
+		return static_cast<okCFrontPanel::ErrorCode>(
+					okDeviceSettings_Delete(h, key.c_str())
+				);
+	}
+
+	okCFrontPanel::ErrorCode Save()
+	{
+		return static_cast<okCFrontPanel::ErrorCode>(okDeviceSettings_Save(h));
+	}
+
+private:
+	okDeviceSettings_HANDLE h;
+
+	friend class okCFrontPanel;
+};
+
+
+/// \brief Class for managing device connections and disconnections.
+///
+/// This class allows to be notified about devices connections and
+/// disconnections.
+///
+/// To receive these notifications, you need to derive your own manager
+/// subclass from this class and override its virtual OnDeviceAdded() and
+/// OnDeviceRemoved() methods.
+///
+/// See Open() method documentation for a simple example of doing this.
+class okCFrontPanelManager
+{
+public:
+	/// \brief Default constructor.
+	///
+	/// This constructor doesn't do anything special, call StartMonitoring()
+	/// to enable calls to OnDeviceAdded() and OnDeviceRemoved() methods.
+	okCFrontPanelManager();
+
+	/// Destructor stops monitoring the devices.
+	virtual ~okCFrontPanelManager();
+
+	/// \brief Start monitoring for Opal Kelly devices connections and
+	/// disconnections.
+	///
+	/// Call this method to subscribe to device connection and disconnection
+	/// messages. If subscription fails, an \c std::runtime_error exception is
+	/// thrown.
+	///
+	/// Otherwise, OnDeviceAdded() will be called for each device connected at
+	/// the moment of this call, allowing the application to build a full list
+	/// of them.
+	///
+	/// Notice that this method relies on having a working event loop in the
+	/// calling application which should dispatch OS-level notifications that
+	/// are generated when the devices are added to or removed from the system,
+	/// the notifications won't be generated without a running event loop.
+	void StartMonitoring();
+
+	/// \brief Called when a new device is connected to the system.
+	///
+	/// The application will typically call okCFrontPanelManager::Open() to open
+	/// the newly connected device.
+	///
+	/// \param[in] serial Unique identifier of the new device.
+	virtual void OnDeviceAdded(const char *serial) = 0;
+
+	/// \brief Called when a device is disconnected from the system.
+	///
+	/// This callback can be used to remove the currently shown device from the
+	/// application UI, for example.
+	///
+	/// Notice that \a serial will normally correspond to the same parameter of
+	/// a previous call to OnDeviceAdded().
+	///
+	/// \param[in] serial Unique identifier of the disconnected device.
+	virtual void OnDeviceRemoved(const char *serial) = 0;
+
+	/// \brief Create a new device object from the serial number.
+	///
+	/// Notice that the caller must delete the pointer returned by this method.
+	/// The best way to do it is to assign its result to \c std::shared_ptr<>,
+	/// \c std::unique_ptr<> or, if your C++ compiler doesn't support these
+	/// classes yet, to \c std::auto_ptr<>. Otherwise you need to do it
+	/// manually, e.g:
+	///
+	/// \code
+	/// // Simple manager class always storing the last connected device
+	/// // (works for single device only, use a std::map of strings to
+	/// // pointers to have more than one).
+	/// class MySimpleManager : public okCFrontPanelManager {
+	/// public:
+	///     MySimpleManager() {
+	///         m_device = NULL;
+	///         StartMonitoring();
+	///     }
+	///
+	///     virtual void OnDeviceAdded(const char *serial) {
+	///         delete m_device;
+	///         m_device = Open(serial);
+	///     }
+	///
+	///     virtual void OnDeviceRemoved(const char *serial) {
+	///         delete m_device;
+	///         m_device = NULL;
+	///     }
+	///
+	/// private:
+	///     okCFrontPanel *m_device;
+	/// };
+	/// \endcode
+	///
+	/// \param[in] serial The serial number of the device to open, typically
+	///   obtained from a call to OnDeviceAdded().
+	/// \return A new device object to be deleted by the caller or \c NULL if
+	///   opening the device failed.
+	okCFrontPanel* Open(const char *serial);
+
+	okCFrontPanelManager_HANDLE h;
+};
+
 #endif // !defined(FRONTPANELDLL_EXPORTS)
 
 }

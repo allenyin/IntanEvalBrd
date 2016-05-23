@@ -26,12 +26,13 @@
 //
 //------------------------------------------------------------------------
 // Copyright (c) 2005-2012 Opal Kelly Incorporated
-// $Rev: 1251 $ $Date: 2012-10-01 22:25:50 -0700 (Mon, 01 Oct 2012) $
+// $Rev: 1910 $ $Date: 2013-12-29 13:21:42 -0800 (Sun, 29 Dec 2013) $
 //------------------------------------------------------------------------
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <iostream>
+
+#include <stdexcept>
 
 #include "okFrontPanelDLL.h"
 
@@ -83,21 +84,13 @@ dll_entrypoint(DLL *dll, const char *name)
 static DLL *
 dll_load(okFP_dll_pchar libname)
 {
-    return((DLL *) LoadLibraryW(libname));
+	return((DLL *) LoadLibraryW(libname));
 }
 #elif defined(_WIN32)
 static DLL *
 dll_load(okFP_dll_pchar libname)
 {
-    // Changed by Intan Technologies to resolve ANSI vs UNICODE problems with LoadLibrary function, 11/14/12
-    //size_t pReturnValue;
-    //wchar_t dest[32768];
-    //mbstowcs_s(&pReturnValue, dest, 32767, libname, 32767);
-    //return((DLL *) LoadLibraryW(dest));
-
-    return((DLL *) LoadLibraryA(libname));
-
-    return((DLL *) LoadLibraryA(libname));  // This was the original code from Opal Kelly
+	return((DLL *) LoadLibrary(libname));
 }
 #else
 static DLL *
@@ -127,7 +120,7 @@ dll_unload(DLL *dll)
 
 
 #ifdef __cplusplus
-#include <string>
+
 //------------------------------------------------------------------------
 // okCPLL22150 C++ wrapper class
 //------------------------------------------------------------------------
@@ -231,6 +224,8 @@ bool okCFrontPanel::to_bool(Bool x)
 	{ return( (x==TRUE)?(true):(false) ); }
 Bool okCFrontPanel::from_bool(bool x)
 	{ return( (x==true)?(TRUE):(FALSE) ); }
+okCFrontPanel::okCFrontPanel(okFrontPanel_HANDLE hnd)
+	{ h=hnd; }
 okCFrontPanel::okCFrontPanel()
 	{ h=okFrontPanel_Construct(); }
 okCFrontPanel::~okCFrontPanel()
@@ -276,6 +271,10 @@ std::string okCFrontPanel::GetSerialNumber()
 		okFrontPanel_GetSerialNumber(h, str);
 		return(std::string(str));
 	}
+okCFrontPanel::ErrorCode okCFrontPanel::GetDeviceSettings(okCDeviceSettings& settings)
+	{
+		return (ErrorCode)okFrontPanel_GetDeviceSettings(h, settings.h);
+	}
 std::string okCFrontPanel::GetDeviceID()
 	{
 		char str[MAX_DEVICEID_LENGTH+1];
@@ -290,22 +289,20 @@ void okCFrontPanel::SetTimeout(int timeout)
 	{ okFrontPanel_SetTimeout(h, timeout); }
 okCFrontPanel::ErrorCode okCFrontPanel::ResetFPGA()
 	{ return((okCFrontPanel::ErrorCode) okFrontPanel_ResetFPGA(h)); }
-okCFrontPanel::ErrorCode okCFrontPanel::ConfigureFPGAFromMemory(unsigned char *data, const unsigned long length, void(*)(int, int, void *), void *)
+void okCFrontPanel::Close()
+	{ okFrontPanel_Close(h); }
+okCFrontPanel::ErrorCode okCFrontPanel::ConfigureFPGAFromMemory(unsigned char *data, const unsigned long length, void(*callback)(int, int, void *), void *arg)
 	{ return((okCFrontPanel::ErrorCode) okFrontPanel_ConfigureFPGAFromMemory(h, data, length)); }
-okCFrontPanel::ErrorCode okCFrontPanel::ConfigureFPGA(const std::string strFilename, void (*)(int, int, void *), void *)
+okCFrontPanel::ErrorCode okCFrontPanel::ConfigureFPGA(const std::string strFilename, void (*callback)(int, int, void *), void *arg)
 	{ return((okCFrontPanel::ErrorCode) okFrontPanel_ConfigureFPGA(h, strFilename.c_str())); }
-okCFrontPanel::ErrorCode okCFrontPanel::GetFPGABootResetProfile(okTFPGAResetProfile *profile)
-	{ return((okCFrontPanel::ErrorCode) okFrontPanel_GetFPGABootResetProfile(h, profile)); }
-okCFrontPanel::ErrorCode okCFrontPanel::GetFPGAJTAGResetProfile(okTFPGAResetProfile *profile)
-	{ return((okCFrontPanel::ErrorCode) okFrontPanel_GetFPGAJTAGResetProfile(h, profile)); }
+okCFrontPanel::ErrorCode okCFrontPanel::GetFPGAResetProfile(okEFPGAConfigurationMethod method, okTFPGAResetProfile *profile)
+	{ return((okCFrontPanel::ErrorCode) okFrontPanel_GetFPGAResetProfile(h, method, profile)); }
 okCFrontPanel::ErrorCode okCFrontPanel::ReadRegister(UINT32 addr, UINT32 *data)
 	{ return((okCFrontPanel::ErrorCode) okFrontPanel_ReadRegister(h, addr, data)); }
-okCFrontPanel::ErrorCode okCFrontPanel::ReadRegisterSet(okTRegisterSet *set)
-	{ return((okCFrontPanel::ErrorCode) okFrontPanel_ReadRegisterSet(h, set)); }
-okCFrontPanel::ErrorCode okCFrontPanel::SetFPGABootResetProfile(okTFPGAResetProfile *profile)
-	{ return((okCFrontPanel::ErrorCode) okFrontPanel_SetFPGABootResetProfile(h, profile)); }
-okCFrontPanel::ErrorCode okCFrontPanel::SetFPGAJTAGResetProfile(okTFPGAResetProfile *profile)
-	{ return((okCFrontPanel::ErrorCode) okFrontPanel_SetFPGAJTAGResetProfile(h, profile)); }
+okCFrontPanel::ErrorCode okCFrontPanel::ReadRegisters(std::vector<okTRegisterEntry>& regs)
+	{ return((okCFrontPanel::ErrorCode) okFrontPanel_ReadRegisters(h, (unsigned int)regs.size(), regs.empty() ? NULL : &regs[0])); }
+okCFrontPanel::ErrorCode okCFrontPanel::SetFPGAResetProfile(okEFPGAConfigurationMethod method, const okTFPGAResetProfile *profile)
+	{ return((okCFrontPanel::ErrorCode) okFrontPanel_SetFPGAResetProfile(h, method, profile)); }
 okCFrontPanel::ErrorCode okCFrontPanel::FlashEraseSector(UINT32 address)
 	{ return((okCFrontPanel::ErrorCode) okFrontPanel_FlashEraseSector(h, address)); }
 okCFrontPanel::ErrorCode okCFrontPanel::FlashWrite(UINT32 address, UINT32 length, const UINT8 *buf)
@@ -314,8 +311,8 @@ okCFrontPanel::ErrorCode okCFrontPanel::FlashRead(UINT32 address, UINT32 length,
 	{ return((okCFrontPanel::ErrorCode) okFrontPanel_FlashRead(h, address, length, buf)); }
 okCFrontPanel::ErrorCode okCFrontPanel::WriteRegister(UINT32 addr, UINT32 data)
 	{ return((okCFrontPanel::ErrorCode) okFrontPanel_WriteRegister(h, addr, data)); }
-okCFrontPanel::ErrorCode okCFrontPanel::WriteRegisterSet(okTRegisterSet *set)
-	{ return((okCFrontPanel::ErrorCode) okFrontPanel_WriteRegisterSet(h, set)); }
+okCFrontPanel::ErrorCode okCFrontPanel::WriteRegisters(const std::vector<okTRegisterEntry>& regs)
+	{ return((okCFrontPanel::ErrorCode) okFrontPanel_WriteRegisters(h, (unsigned int)regs.size(), regs.empty() ? NULL : &regs[0])); }
 okCFrontPanel::ErrorCode okCFrontPanel::GetWireInValue(int epAddr, UINT32 *val)
 	{ return((okCFrontPanel::ErrorCode) okFrontPanel_GetWireInValue(h, epAddr, val)); }
 okCFrontPanel::ErrorCode okCFrontPanel::WriteI2C(const int addr, int length, unsigned char *data)
@@ -345,10 +342,10 @@ bool okCFrontPanel::IsFrontPanelEnabled()
 bool okCFrontPanel::IsFrontPanel3Supported()
 	{ return(to_bool(okFrontPanel_IsFrontPanel3Supported(h))); }
 //	void UnregisterAll();
-//	void AddEventHandler(okCEventHandler *handler);
+//	void AddEventHandler(EventHandler *handler);
 void okCFrontPanel::UpdateWireIns()
 	{ okFrontPanel_UpdateWireIns(h); }
-okCFrontPanel::ErrorCode okCFrontPanel::SetWireInValue(int ep, unsigned long val, unsigned long mask)
+okCFrontPanel::ErrorCode okCFrontPanel::SetWireInValue(int ep, UINT32 val, UINT32 mask)
 	{ return((okCFrontPanel::ErrorCode) okFrontPanel_SetWireInValue(h, ep, val, mask)); }
 void okCFrontPanel::UpdateWireOuts()
 	{ okFrontPanel_UpdateWireOuts(h); }
@@ -358,7 +355,7 @@ okCFrontPanel::ErrorCode okCFrontPanel::ActivateTriggerIn(int epAddr, int bit)
 	{ return((okCFrontPanel::ErrorCode) okFrontPanel_ActivateTriggerIn(h, epAddr, bit)); }
 void okCFrontPanel::UpdateTriggerOuts()
 	{ okFrontPanel_UpdateTriggerOuts(h); }
-bool okCFrontPanel::IsTriggered(int epAddr, unsigned long mask)
+bool okCFrontPanel::IsTriggered(int epAddr, UINT32 mask)
 	{ return(to_bool(okFrontPanel_IsTriggered(h, epAddr, mask))); }
 long okCFrontPanel::GetLastTransferLength()
 	{ return(okFrontPanel_GetLastTransferLength(h)); }
@@ -370,6 +367,27 @@ long okCFrontPanel::WriteToBlockPipeIn(int epAddr, int blockSize, long length, u
 	{ return(okFrontPanel_WriteToBlockPipeIn(h, epAddr, blockSize, length, data)); }
 long okCFrontPanel::ReadFromBlockPipeOut(int epAddr, int blockSize, long length, unsigned char *data)
 	{ return(okFrontPanel_ReadFromBlockPipeOut(h, epAddr, blockSize, length, data)); }
+
+//------------------------------------------------------------------------
+// FrontPanelManagerHandle C++ wrapper class
+//------------------------------------------------------------------------
+
+okCFrontPanelManager::okCFrontPanelManager()
+	{ h=okFrontPanelManager_Construct(reinterpret_cast<okFrontPanelManager_HANDLE>(this)); }
+okCFrontPanelManager::~okCFrontPanelManager()
+	{ okFrontPanelManager_Destruct(h); }
+
+void okCFrontPanelManager::StartMonitoring()
+{
+	if (okFrontPanelManager_StartMonitoring(h) != ok_NoError)
+		throw std::runtime_error("Failed to start monitoring devices connection.");
+}
+
+okCFrontPanel* okCFrontPanelManager::Open(const char *serial)
+{
+	okFrontPanel_HANDLE hFP = okFrontPanelManager_Open(h, serial);
+	return hFP ? new okCFrontPanel(hFP) : NULL;
+}
 
 #endif // __cplusplus
 
@@ -423,6 +441,15 @@ typedef Bool                   (DLL_ENTRY *OKPLL22393_ISPLLENABLED_FN)          
 typedef void                   (DLL_ENTRY *OKPLL22393_INITFROMPROGRAMMINGINFO_FN)          (okPLL22393_HANDLE, unsigned char *);
 typedef void                   (DLL_ENTRY *OKPLL22393_GETPROGRAMMINGINFO_FN)               (okPLL22393_HANDLE, unsigned char *);
 
+typedef okDeviceSettings_HANDLE (DLL_ENTRY *okDeviceSettings_CONSTRUCT_FN)                 (void);
+typedef void                    (DLL_ENTRY *okDeviceSettings_DESTRUCT_FN)                  (okDeviceSettings_HANDLE);
+typedef ok_ErrorCode            (DLL_ENTRY *okDeviceSettings_GETSTRING_FN)                 (okDeviceSettings_HANDLE, const char *, int, char*);
+typedef ok_ErrorCode            (DLL_ENTRY *okDeviceSettings_SETSTRING_FN)                 (okDeviceSettings_HANDLE, const char *, const char*);
+typedef ok_ErrorCode            (DLL_ENTRY *okDeviceSettings_GETINT_FN)                    (okDeviceSettings_HANDLE, const char *, UINT32*);
+typedef ok_ErrorCode            (DLL_ENTRY *okDeviceSettings_SETINT_FN)                    (okDeviceSettings_HANDLE, const char *, UINT32);
+typedef ok_ErrorCode            (DLL_ENTRY *okDeviceSettings_DELETE_FN)                    (okDeviceSettings_HANDLE, const char *);
+typedef ok_ErrorCode            (DLL_ENTRY *okDeviceSettings_SAVE_FN)                      (okDeviceSettings_HANDLE);
+
 typedef okFrontPanel_HANDLE (DLL_ENTRY *okFrontPanel_CONSTRUCT_FN)                        (void);
 typedef void                   (DLL_ENTRY *okFrontPanel_DESTRUCT_FN)                         (okFrontPanel_HANDLE);
 typedef int                    (DLL_ENTRY *okFrontPanel_GETHOSTINTERFACEWIDTH_FN)            (okFrontPanel_HANDLE);
@@ -443,7 +470,9 @@ typedef ok_ErrorCode           (DLL_ENTRY *okFrontPanel_GETDEVICEINFO_FN)       
 typedef int                    (DLL_ENTRY *okFrontPanel_GETDEVICEMAJORVERSION_FN)            (okFrontPanel_HANDLE);
 typedef int                    (DLL_ENTRY *okFrontPanel_GETDEVICEMINORVERSION_FN)            (okFrontPanel_HANDLE);
 typedef ok_ErrorCode           (DLL_ENTRY *okFrontPanel_RESETFPGA_FN)                        (okFrontPanel_HANDLE);
+typedef void                   (DLL_ENTRY *okFrontPanel_CLOSE_FN)                            (okFrontPanel_HANDLE);
 typedef void                   (DLL_ENTRY *okFrontPanel_GETSERIALNUMBER_FN)                  (okFrontPanel_HANDLE, char *);
+typedef ok_ErrorCode           (DLL_ENTRY *okFrontPanel_GETDEVICESETTINGS_FN)                (okFrontPanel_HANDLE, okDeviceSettings_HANDLE);
 typedef void                   (DLL_ENTRY *okFrontPanel_GETDEVICEID_FN)                      (okFrontPanel_HANDLE, char *);
 typedef void                   (DLL_ENTRY *okFrontPanel_SETDEVICEID_FN)                      (okFrontPanel_HANDLE, const char *);
 typedef ok_ErrorCode           (DLL_ENTRY *okFrontPanel_CONFIGUREFPGA_FN)                    (okFrontPanel_HANDLE, const char *);
@@ -474,15 +503,18 @@ typedef long                   (DLL_ENTRY *okFrontPanel_READFROMBLOCKPIPEOUT_FN)
 typedef ok_ErrorCode           (DLL_ENTRY *okFrontPanel_FLASHERASESECTOR_FN)                 (okFrontPanel_HANDLE, UINT32);
 typedef ok_ErrorCode           (DLL_ENTRY *okFrontPanel_FLASHWRITE_FN)                       (okFrontPanel_HANDLE, UINT32, UINT32, const UINT8 *);
 typedef ok_ErrorCode           (DLL_ENTRY *okFrontPanel_FLASHREAD_FN)                        (okFrontPanel_HANDLE, UINT32, UINT32, UINT8 *);
-typedef ok_ErrorCode           (DLL_ENTRY *okFrontPanel_GETFPGABOOTRESETPROFILE_FN)          (okFrontPanel_HANDLE, okTFPGAResetProfile *);
-typedef ok_ErrorCode           (DLL_ENTRY *okFrontPanel_GETFPGAJTAGRESETPROFILE_FN)          (okFrontPanel_HANDLE, okTFPGAResetProfile *);
-typedef ok_ErrorCode           (DLL_ENTRY *okFrontPanel_SETFPGABOOTRESETPROFILE_FN)          (okFrontPanel_HANDLE, okTFPGAResetProfile *);
-typedef ok_ErrorCode           (DLL_ENTRY *okFrontPanel_SETFPGAJTAGRESETPROFILE_FN)          (okFrontPanel_HANDLE, okTFPGAResetProfile *);
+typedef ok_ErrorCode           (DLL_ENTRY *okFrontPanel_GETFPGARESETPROFILE_FN)              (okFrontPanel_HANDLE, okEFPGAConfigurationMethod, okTFPGAResetProfile *);
+typedef ok_ErrorCode           (DLL_ENTRY *okFrontPanel_SETFPGARESETPROFILE_FN)              (okFrontPanel_HANDLE, okEFPGAConfigurationMethod, const okTFPGAResetProfile *);
 typedef ok_ErrorCode           (DLL_ENTRY *okFrontPanel_READREGISTER_FN)                     (okFrontPanel_HANDLE, UINT32, UINT32 *);
-typedef ok_ErrorCode           (DLL_ENTRY *okFrontPanel_READREGISTERSET_FN)                  (okFrontPanel_HANDLE, okTRegisterSet *);
+typedef ok_ErrorCode           (DLL_ENTRY *okFrontPanel_READREGISTERS_FN)                    (okFrontPanel_HANDLE, unsigned, okTRegisterEntry *);
 typedef ok_ErrorCode           (DLL_ENTRY *okFrontPanel_WRITEREGISTER_FN)                    (okFrontPanel_HANDLE, UINT32, UINT32);
-typedef ok_ErrorCode           (DLL_ENTRY *okFrontPanel_WRITEREGISTERSET_FN)                 (okFrontPanel_HANDLE, okTRegisterSet *);
+typedef ok_ErrorCode           (DLL_ENTRY *okFrontPanel_WRITEREGISTERS_FN)                   (okFrontPanel_HANDLE, unsigned, const okTRegisterEntry *);
 typedef ok_ErrorCode           (DLL_ENTRY *okFrontPanel_GETWIREINVALUE_FN)                   (okFrontPanel_HANDLE, int, UINT32 *);
+
+typedef okCFrontPanelManager_HANDLE (DLL_ENTRY *okFrontPanelManager_CONSTRUCT_FN)            (okFrontPanelManager_HANDLE);
+typedef void                   (DLL_ENTRY *okFrontPanelManager_DESTRUCT_FN)                  (okCFrontPanelManager_HANDLE);
+typedef ok_ErrorCode           (DLL_ENTRY *okFrontPanelManager_STARTMONITORING_FN)           (okCFrontPanelManager_HANDLE);
+typedef okFrontPanel_HANDLE    (DLL_ENTRY *okFrontPanelManager_OPEN_FN)                      (okCFrontPanelManager_HANDLE, const char *);
 
 //------------------------------------------------------------------------
 // Function pointers
@@ -533,6 +565,15 @@ OKPLL22150_ISOUTPUTENABLED_FN                  _okPLL22150_IsOutputEnabled = NUL
 OKPLL22150_INITFROMPROGRAMMINGINFO_FN          _okPLL22150_InitFromProgrammingInfo = NULL;
 OKPLL22150_GETPROGRAMMINGINFO_FN               _okPLL22150_GetProgrammingInfo = NULL;
 
+okDeviceSettings_CONSTRUCT_FN                  _okDeviceSettings_Construct = NULL;
+okDeviceSettings_DESTRUCT_FN                   _okDeviceSettings_Destruct = NULL;
+okDeviceSettings_GETSTRING_FN                  _okDeviceSettings_GetString = NULL;
+okDeviceSettings_SETSTRING_FN                  _okDeviceSettings_SetString = NULL;
+okDeviceSettings_GETINT_FN                     _okDeviceSettings_GetInt = NULL;
+okDeviceSettings_SETINT_FN                     _okDeviceSettings_SetInt = NULL;
+okDeviceSettings_DELETE_FN                     _okDeviceSettings_Delete = NULL;
+okDeviceSettings_SAVE_FN                       _okDeviceSettings_Save = NULL;
+
 okFrontPanel_CONSTRUCT_FN                        _okFrontPanel_Construct = NULL;
 okFrontPanel_DESTRUCT_FN                         _okFrontPanel_Destruct = NULL;
 okFrontPanel_GETHOSTINTERFACEWIDTH_FN            _okFrontPanel_GetHostInterfaceWidth = NULL;
@@ -553,7 +594,9 @@ okFrontPanel_GETDEVICEINFO_FN                    _okFrontPanel_GetDeviceInfo = N
 okFrontPanel_GETDEVICEMAJORVERSION_FN            _okFrontPanel_GetDeviceMajorVersion = NULL;
 okFrontPanel_GETDEVICEMINORVERSION_FN            _okFrontPanel_GetDeviceMinorVersion = NULL;
 okFrontPanel_RESETFPGA_FN                        _okFrontPanel_ResetFPGA = NULL;
+okFrontPanel_CLOSE_FN                            _okFrontPanel_Close = NULL;
 okFrontPanel_GETSERIALNUMBER_FN                  _okFrontPanel_GetSerialNumber = NULL;
+okFrontPanel_GETDEVICESETTINGS_FN                _okFrontPanel_GetDeviceSettings = NULL;
 okFrontPanel_GETDEVICEID_FN                      _okFrontPanel_GetDeviceID = NULL;
 okFrontPanel_SETDEVICEID_FN                      _okFrontPanel_SetDeviceID = NULL;
 okFrontPanel_CONFIGUREFPGA_FN                    _okFrontPanel_ConfigureFPGA = NULL;
@@ -584,16 +627,18 @@ okFrontPanel_READFROMBLOCKPIPEOUT_FN             _okFrontPanel_ReadFromBlockPipe
 okFrontPanel_FLASHERASESECTOR_FN                 _okFrontPanel_FlashEraseSector = NULL;
 okFrontPanel_FLASHWRITE_FN                       _okFrontPanel_FlashWrite = NULL;
 okFrontPanel_FLASHREAD_FN                        _okFrontPanel_FlashRead = NULL;
-okFrontPanel_GETFPGABOOTRESETPROFILE_FN          _okFrontPanel_GetFPGABootResetProfile = NULL;
-okFrontPanel_GETFPGAJTAGRESETPROFILE_FN          _okFrontPanel_GetFPGAJTAGResetProfile = NULL;
-okFrontPanel_SETFPGABOOTRESETPROFILE_FN          _okFrontPanel_SetFPGABootResetProfile = NULL;
-okFrontPanel_SETFPGAJTAGRESETPROFILE_FN          _okFrontPanel_SetFPGAJTAGResetProfile = NULL;
+okFrontPanel_GETFPGARESETPROFILE_FN              _okFrontPanel_GetFPGAResetProfile = NULL;
+okFrontPanel_SETFPGARESETPROFILE_FN              _okFrontPanel_SetFPGAResetProfile = NULL;
 okFrontPanel_READREGISTER_FN                     _okFrontPanel_ReadRegister = NULL;
-okFrontPanel_READREGISTERSET_FN                  _okFrontPanel_ReadRegisterSet = NULL;
+okFrontPanel_READREGISTERS_FN                    _okFrontPanel_ReadRegisters = NULL;
 okFrontPanel_WRITEREGISTER_FN                    _okFrontPanel_WriteRegister = NULL;
-okFrontPanel_WRITEREGISTERSET_FN                 _okFrontPanel_WriteRegisterSet = NULL;
+okFrontPanel_WRITEREGISTERS_FN                   _okFrontPanel_WriteRegisters = NULL;
 okFrontPanel_GETWIREINVALUE_FN                   _okFrontPanel_GetWireInValue = NULL;
 
+okFrontPanelManager_CONSTRUCT_FN                 _okFrontPanelManager_Construct = NULL;
+okFrontPanelManager_DESTRUCT_FN                  _okFrontPanelManager_Destruct = NULL;
+okFrontPanelManager_STARTMONITORING_FN           _okFrontPanelManager_StartMonitoring = NULL;
+okFrontPanelManager_OPEN_FN                      _okFrontPanelManager_Open = NULL;
 
 //------------------------------------------------------------------------
 
@@ -666,6 +711,15 @@ okFrontPanelDLL_LoadLib(okFP_dll_pchar libname)
 		_okPLL22393_InitFromProgrammingInfo           = ( OKPLL22393_INITFROMPROGRAMMINGINFO_FN )            dll_entrypoint( hLib, "okPLL22393_InitFromProgrammingInfo" );
 		_okPLL22393_GetProgrammingInfo                = ( OKPLL22393_GETPROGRAMMINGINFO_FN )                 dll_entrypoint( hLib, "okPLL22393_GetProgrammingInfo" );
 
+		_okDeviceSettings_Construct                   = (okDeviceSettings_CONSTRUCT_FN)                      dll_entrypoint( hLib, "okDeviceSettings_Construct" );
+		_okDeviceSettings_Destruct                    = (okDeviceSettings_DESTRUCT_FN)                       dll_entrypoint( hLib, "okDeviceSettings_Destruct" );
+		_okDeviceSettings_GetString                   = (okDeviceSettings_GETSTRING_FN)                      dll_entrypoint( hLib, "okDeviceSettings_GetString" );
+		_okDeviceSettings_SetString                   = (okDeviceSettings_SETSTRING_FN)                      dll_entrypoint( hLib, "okDeviceSettings_SetString" );
+		_okDeviceSettings_GetInt                      = (okDeviceSettings_GETINT_FN)                         dll_entrypoint( hLib, "okDeviceSettings_GetInt" );
+		_okDeviceSettings_SetInt                      = (okDeviceSettings_SETINT_FN)                         dll_entrypoint( hLib, "okDeviceSettings_SetInt" );
+		_okDeviceSettings_Delete                      = (okDeviceSettings_DELETE_FN)                         dll_entrypoint( hLib, "okDeviceSettings_Delete" );
+		_okDeviceSettings_Save                        = (okDeviceSettings_SAVE_FN)                           dll_entrypoint( hLib, "okDeviceSettings_Save" );
+
 		_okFrontPanel_Construct                         = ( okFrontPanel_CONSTRUCT_FN )                          dll_entrypoint( hLib, "okFrontPanel_Construct" );
 		_okFrontPanel_Destruct                          = ( okFrontPanel_DESTRUCT_FN )                           dll_entrypoint( hLib, "okFrontPanel_Destruct" );
 		_okFrontPanel_GetHostInterfaceWidth             = ( okFrontPanel_GETHOSTINTERFACEWIDTH_FN )              dll_entrypoint( hLib, "okFrontPanel_GetHostInterfaceWidth" );
@@ -686,7 +740,9 @@ okFrontPanelDLL_LoadLib(okFP_dll_pchar libname)
 		_okFrontPanel_GetDeviceMajorVersion             = ( okFrontPanel_GETDEVICEMAJORVERSION_FN )              dll_entrypoint( hLib, "okFrontPanel_GetDeviceMajorVersion" );
 		_okFrontPanel_GetDeviceMinorVersion             = ( okFrontPanel_GETDEVICEMINORVERSION_FN )              dll_entrypoint( hLib, "okFrontPanel_GetDeviceMinorVersion" );
 		_okFrontPanel_ResetFPGA                         = ( okFrontPanel_RESETFPGA_FN )                          dll_entrypoint( hLib, "okFrontPanel_ResetFPGA" );
+		_okFrontPanel_Close                             = ( okFrontPanel_CLOSE_FN )                              dll_entrypoint( hLib, "okFrontPanel_Close" );
 		_okFrontPanel_GetSerialNumber                   = ( okFrontPanel_GETSERIALNUMBER_FN )                    dll_entrypoint( hLib, "okFrontPanel_GetSerialNumber" );
+		_okFrontPanel_GetDeviceSettings                 = ( okFrontPanel_GETDEVICESETTINGS_FN )                  dll_entrypoint( hLib, "okFrontPanel_GetDeviceSettings" );
 		_okFrontPanel_GetDeviceID                       = ( okFrontPanel_GETDEVICEID_FN )                        dll_entrypoint( hLib, "okFrontPanel_GetDeviceID" );
 		_okFrontPanel_SetDeviceID                       = ( okFrontPanel_SETDEVICEID_FN )                        dll_entrypoint( hLib, "okFrontPanel_SetDeviceID" );
 		_okFrontPanel_ConfigureFPGA                     = ( okFrontPanel_CONFIGUREFPGA_FN )                      dll_entrypoint( hLib, "okFrontPanel_ConfigureFPGA" );
@@ -717,15 +773,18 @@ okFrontPanelDLL_LoadLib(okFP_dll_pchar libname)
 		_okFrontPanel_FlashEraseSector                  = ( okFrontPanel_FLASHERASESECTOR_FN )                   dll_entrypoint( hLib, "okFrontPanel_FlashEraseSector" );
 		_okFrontPanel_FlashWrite                        = ( okFrontPanel_FLASHWRITE_FN )                         dll_entrypoint( hLib, "okFrontPanel_FlashWrite" );
 		_okFrontPanel_FlashRead                         = ( okFrontPanel_FLASHREAD_FN )                          dll_entrypoint( hLib, "okFrontPanel_FlashRead" );
-		_okFrontPanel_GetFPGABootResetProfile           = ( okFrontPanel_GETFPGABOOTRESETPROFILE_FN )            dll_entrypoint( hLib, "okFrontPanel_GetFPGABootResetProfile" );
-		_okFrontPanel_GetFPGAJTAGResetProfile           = ( okFrontPanel_GETFPGAJTAGRESETPROFILE_FN )            dll_entrypoint( hLib, "okFrontPanel_GetFPGAJTAGResetProfile" );
-		_okFrontPanel_SetFPGABootResetProfile           = ( okFrontPanel_SETFPGABOOTRESETPROFILE_FN )            dll_entrypoint( hLib, "okFrontPanel_SetFPGABootResetProfile" );
-		_okFrontPanel_SetFPGAJTAGResetProfile           = ( okFrontPanel_SETFPGAJTAGRESETPROFILE_FN )            dll_entrypoint( hLib, "okFrontPanel_SetFPGAJTAGResetProfile" );
+		_okFrontPanel_GetFPGAResetProfile               = ( okFrontPanel_GETFPGARESETPROFILE_FN )                dll_entrypoint( hLib, "okFrontPanel_GetFPGAResetProfile" );
+		_okFrontPanel_SetFPGAResetProfile               = ( okFrontPanel_SETFPGARESETPROFILE_FN )                dll_entrypoint( hLib, "okFrontPanel_SetFPGAResetProfile" );
 		_okFrontPanel_ReadRegister                      = ( okFrontPanel_READREGISTER_FN )                       dll_entrypoint( hLib, "okFrontPanel_ReadRegister" );
-		_okFrontPanel_ReadRegisterSet                   = ( okFrontPanel_READREGISTERSET_FN )                    dll_entrypoint( hLib, "okFrontPanel_ReadRegisterSet" );
+		_okFrontPanel_ReadRegisters                     = ( okFrontPanel_READREGISTERS_FN )                      dll_entrypoint( hLib, "okFrontPanel_ReadRegisters" );
 		_okFrontPanel_WriteRegister                     = ( okFrontPanel_WRITEREGISTER_FN )                      dll_entrypoint( hLib, "okFrontPanel_WriteRegister" );
-		_okFrontPanel_WriteRegisterSet                  = ( okFrontPanel_WRITEREGISTERSET_FN )                   dll_entrypoint( hLib, "okFrontPanel_WriteRegisterSet" );
+		_okFrontPanel_WriteRegisters                    = ( okFrontPanel_WRITEREGISTERS_FN )                     dll_entrypoint( hLib, "okFrontPanel_WriteRegisters" );
 		_okFrontPanel_GetWireInValue                    = ( okFrontPanel_GETWIREINVALUE_FN )                     dll_entrypoint( hLib, "okFrontPanel_GetWireInValue" );
+
+		_okFrontPanelManager_Construct                  = ( okFrontPanelManager_CONSTRUCT_FN )                   dll_entrypoint( hLib, "okFrontPanelManager_Construct" );
+		_okFrontPanelManager_Destruct                   = ( okFrontPanelManager_DESTRUCT_FN )                    dll_entrypoint( hLib, "okFrontPanelManager_Destruct" );
+		_okFrontPanelManager_StartMonitoring            = ( okFrontPanelManager_STARTMONITORING_FN )             dll_entrypoint( hLib, "okFrontPanelManager_StartMonitoring" );
+		_okFrontPanelManager_Open                       = ( okFrontPanelManager_OPEN_FN )                        dll_entrypoint( hLib, "okFrontPanelManager_Open" );
 	}
 
     if (NULL == hLib) {
@@ -761,7 +820,9 @@ okFrontPanelDLL_FreeLib(void)
 	_okFrontPanel_GetDeviceMajorVersion             = NULL;
 	_okFrontPanel_GetDeviceMinorVersion             = NULL;
 	_okFrontPanel_ResetFPGA                         = NULL;
+	_okFrontPanel_Close                             = NULL;
 	_okFrontPanel_GetSerialNumber                   = NULL;
+	_okFrontPanel_GetDeviceSettings                 = NULL;
 	_okFrontPanel_GetDeviceID                       = NULL;
 	_okFrontPanel_SetDeviceID                       = NULL;
 	_okFrontPanel_ConfigureFPGA                     = NULL;
@@ -791,14 +852,12 @@ okFrontPanelDLL_FreeLib(void)
     _okFrontPanel_FlashEraseSector                  = NULL;
     _okFrontPanel_FlashWrite                        = NULL;
     _okFrontPanel_FlashRead                         = NULL;
-    _okFrontPanel_GetFPGABootResetProfile           = NULL;
-    _okFrontPanel_GetFPGAJTAGResetProfile           = NULL;
-    _okFrontPanel_SetFPGABootResetProfile           = NULL;
-    _okFrontPanel_SetFPGAJTAGResetProfile           = NULL;
+    _okFrontPanel_GetFPGAResetProfile               = NULL;
+    _okFrontPanel_SetFPGAResetProfile               = NULL;
     _okFrontPanel_ReadRegister                      = NULL;
-    _okFrontPanel_ReadRegisterSet                   = NULL;
+    _okFrontPanel_ReadRegisters                   = NULL;
     _okFrontPanel_WriteRegister                     = NULL;
-    _okFrontPanel_WriteRegisterSet                  = NULL;
+    _okFrontPanel_WriteRegisters                  = NULL;
     _okFrontPanel_GetWireInValue                    = NULL;
 
 	_okPLL22393_Construct                         = NULL;
@@ -1186,6 +1245,80 @@ okPLL22150_GetProgrammingInfo(okPLL22150_HANDLE pll, unsigned char *buf)
 
 
 //------------------------------------------------------------------------
+// Function calls - okCDeviceSettings
+//------------------------------------------------------------------------
+
+okDLLEXPORT okDeviceSettings_HANDLE DLL_ENTRY
+okDeviceSettings_Construct()
+{
+	if (_okDeviceSettings_Construct)
+		return (*_okDeviceSettings_Construct)();
+
+	return NULL;
+}
+
+okDLLEXPORT void DLL_ENTRY
+okDeviceSettings_Destruct(okDeviceSettings_HANDLE hnd)
+{
+	if (_okDeviceSettings_Destruct)
+		(*_okDeviceSettings_Destruct)(hnd);
+}
+
+okDLLEXPORT ok_ErrorCode DLL_ENTRY
+okDeviceSettings_GetString(okDeviceSettings_HANDLE hnd, const char *key, int length, char *buf)
+{
+	if (_okDeviceSettings_GetString)
+		return (*_okDeviceSettings_GetString)(hnd, key, length, buf);
+
+	return(ok_UnsupportedFeature);
+}
+
+okDLLEXPORT ok_ErrorCode DLL_ENTRY
+okDeviceSettings_SetString(okDeviceSettings_HANDLE hnd, const char *key, const char *buf)
+{
+	if (_okDeviceSettings_SetString)
+		return (*_okDeviceSettings_SetString)(hnd, key, buf);
+
+	return(ok_UnsupportedFeature);
+}
+
+okDLLEXPORT ok_ErrorCode DLL_ENTRY
+okDeviceSettings_GetInt(okDeviceSettings_HANDLE hnd, const char *key, UINT32 *value)
+{
+	if (_okDeviceSettings_GetInt)
+		return (*_okDeviceSettings_GetInt)(hnd, key, value);
+
+	return(ok_UnsupportedFeature);
+}
+
+okDLLEXPORT ok_ErrorCode DLL_ENTRY
+okDeviceSettings_SetInt(okDeviceSettings_HANDLE hnd, const char *key, UINT32 value)
+{
+	if (_okDeviceSettings_SetInt)
+		return (*_okDeviceSettings_SetInt)(hnd, key, value);
+
+	return(ok_UnsupportedFeature);
+}
+
+okDLLEXPORT ok_ErrorCode DLL_ENTRY
+okDeviceSettings_Delete(okDeviceSettings_HANDLE hnd, const char *key)
+{
+	if (_okDeviceSettings_Delete)
+		return (*_okDeviceSettings_Delete)(hnd, key);
+
+	return(ok_UnsupportedFeature);
+}
+
+okDLLEXPORT ok_ErrorCode DLL_ENTRY
+okDeviceSettings_Save(okDeviceSettings_HANDLE hnd)
+{
+	if (_okDeviceSettings_Save)
+		return (*_okDeviceSettings_Save)(hnd);
+
+	return(ok_UnsupportedFeature);
+}
+
+//------------------------------------------------------------------------
 // Function calls - okCFrontPanel
 //------------------------------------------------------------------------
 okDLLEXPORT okFrontPanel_HANDLE DLL_ENTRY
@@ -1269,8 +1402,6 @@ okFrontPanel_GetDeviceCount(okFrontPanel_HANDLE hnd)
 {
 	if (_okFrontPanel_GetDeviceCount)
 		return((*_okFrontPanel_GetDeviceCount)(hnd));
-
-    std::cerr << "okFrontPanel_GetDeviceCount failing because _okFrontPanel_GetDeviceCount == null\n";
 
 	return(0);
 }
@@ -1372,10 +1503,26 @@ okFrontPanel_ResetFPGA(okFrontPanel_HANDLE hnd)
 }
 
 okDLLEXPORT void DLL_ENTRY
+okFrontPanel_Close(okFrontPanel_HANDLE hnd)
+{
+	if (_okFrontPanel_Close)
+		((*_okFrontPanel_Close)(hnd));
+}
+
+okDLLEXPORT void DLL_ENTRY
 okFrontPanel_GetSerialNumber(okFrontPanel_HANDLE hnd, char *buf)
 {
 	if (_okFrontPanel_GetSerialNumber)
 		(*_okFrontPanel_GetSerialNumber)(hnd, buf);
+}
+
+okDLLEXPORT ok_ErrorCode DLL_ENTRY
+okFrontPanel_GetDeviceSettings(okFrontPanel_HANDLE hnd, okDeviceSettings_HANDLE settings)
+{
+	if (_okFrontPanel_GetDeviceSettings)
+		(*_okFrontPanel_GetDeviceSettings)(hnd, settings);
+
+	return(ok_UnsupportedFeature);
 }
 
 okDLLEXPORT void DLL_ENTRY
@@ -1642,40 +1789,20 @@ okFrontPanel_FlashRead(okFrontPanel_HANDLE hnd, UINT32 address, UINT32 length, U
 
 
 okDLLEXPORT ok_ErrorCode DLL_ENTRY
-okFrontPanel_GetFPGABootResetProfile(okFrontPanel_HANDLE hnd, okTFPGAResetProfile *profile)
+okFrontPanel_GetFPGAResetProfile(okFrontPanel_HANDLE hnd, okEFPGAConfigurationMethod method, okTFPGAResetProfile *profile)
 {
-	if (_okFrontPanel_GetFPGABootResetProfile)
-		return((*_okFrontPanel_GetFPGABootResetProfile)(hnd, profile));
+	if (_okFrontPanel_GetFPGAResetProfile)
+		return((*_okFrontPanel_GetFPGAResetProfile)(hnd, method, profile));
 
 	return(ok_UnsupportedFeature);
 }
 
 
 okDLLEXPORT ok_ErrorCode DLL_ENTRY
-okFrontPanel_GetFPGAJTAGResetProfile(okFrontPanel_HANDLE hnd, okTFPGAResetProfile *profile)
+okFrontPanel_SetFPGAResetProfile(okFrontPanel_HANDLE hnd, okEFPGAConfigurationMethod method, const okTFPGAResetProfile *profile)
 {
-	if (_okFrontPanel_GetFPGAJTAGResetProfile)
-		return((*_okFrontPanel_GetFPGAJTAGResetProfile)(hnd, profile));
-
-	return(ok_UnsupportedFeature);
-}
-
-
-okDLLEXPORT ok_ErrorCode DLL_ENTRY
-okFrontPanel_SetFPGABootResetProfile(okFrontPanel_HANDLE hnd, okTFPGAResetProfile *profile)
-{
-	if (_okFrontPanel_SetFPGABootResetProfile)
-		return((*_okFrontPanel_SetFPGABootResetProfile)(hnd, profile));
-
-	return(ok_UnsupportedFeature);
-}
-
-
-okDLLEXPORT ok_ErrorCode DLL_ENTRY
-okFrontPanel_SetFPGAJTAGResetProfile(okFrontPanel_HANDLE hnd, okTFPGAResetProfile *profile)
-{
-	if (_okFrontPanel_SetFPGAJTAGResetProfile)
-		return((*_okFrontPanel_SetFPGAJTAGResetProfile)(hnd, profile));
+	if (_okFrontPanel_SetFPGAResetProfile)
+		return((*_okFrontPanel_SetFPGAResetProfile)(hnd, method, profile));
 
 	return(ok_UnsupportedFeature);
 }
@@ -1692,10 +1819,10 @@ okFrontPanel_ReadRegister(okFrontPanel_HANDLE hnd, UINT32 addr, UINT32 *data)
 
 
 okDLLEXPORT ok_ErrorCode DLL_ENTRY
-okFrontPanel_ReadRegisterSet(okFrontPanel_HANDLE hnd, okTRegisterSet *set)
+okFrontPanel_ReadRegisters(okFrontPanel_HANDLE hnd, unsigned num, okTRegisterEntry* regs)
 {
-	if (_okFrontPanel_ReadRegisterSet)
-		return((*_okFrontPanel_ReadRegisterSet)(hnd, set));
+	if (_okFrontPanel_ReadRegisters)
+		return((*_okFrontPanel_ReadRegisters)(hnd, num, regs));
 
 	return(ok_UnsupportedFeature);
 }
@@ -1712,10 +1839,10 @@ okFrontPanel_WriteRegister(okFrontPanel_HANDLE hnd, UINT32 addr, UINT32 data)
 
 
 okDLLEXPORT ok_ErrorCode DLL_ENTRY
-okFrontPanel_WriteRegisterSet(okFrontPanel_HANDLE hnd, okTRegisterSet *set)
+okFrontPanel_WriteRegisters(okFrontPanel_HANDLE hnd, unsigned num, const okTRegisterEntry* regs)
 {
-	if (_okFrontPanel_WriteRegisterSet)
-		return((*_okFrontPanel_WriteRegisterSet)(hnd, set));
+	if (_okFrontPanel_WriteRegisters)
+		return((*_okFrontPanel_WriteRegisters)(hnd, num, regs));
 
 	return(ok_UnsupportedFeature);
 }
@@ -1731,3 +1858,40 @@ okFrontPanel_GetWireInValue(okFrontPanel_HANDLE hnd, int epAddr, UINT32 *val)
 }
 
 
+//------------------------------------------------------------------------
+// Function calls - okCFrontPanelManager
+//------------------------------------------------------------------------
+okDLLEXPORT okCFrontPanelManager_HANDLE DLL_ENTRY
+okFrontPanelManager_Construct(okFrontPanelManager_HANDLE self)
+{
+	if (_okFrontPanelManager_Construct)
+		return((*_okFrontPanelManager_Construct)(self));
+
+	return(NULL);
+}
+
+
+okDLLEXPORT void DLL_ENTRY
+okFrontPanelManager_Destruct(okCFrontPanelManager_HANDLE hnd)
+{
+	if (_okFrontPanelManager_Destruct)
+		(*_okFrontPanelManager_Destruct)(hnd);
+}
+
+okDLLEXPORT ok_ErrorCode DLL_ENTRY
+okFrontPanelManager_StartMonitoring(okCFrontPanelManager_HANDLE hnd)
+{
+	if (_okFrontPanelManager_StartMonitoring)
+		return((*_okFrontPanelManager_StartMonitoring)(hnd));
+
+	return(ok_UnsupportedFeature);
+}
+
+okDLLEXPORT okFrontPanel_HANDLE DLL_ENTRY
+okFrontPanelManager_Open(okCFrontPanelManager_HANDLE hnd, const char *serial)
+{
+	if (_okFrontPanelManager_Open)
+		return((*_okFrontPanelManager_Open)(hnd, serial));
+
+	return(NULL);
+}

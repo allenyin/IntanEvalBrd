@@ -27,6 +27,7 @@
 #define FIFO_CAPACITY_WORDS 67108864
 
 #include <queue>
+//#include "okFrontPanelDLL.h"
 
 using namespace std;
 

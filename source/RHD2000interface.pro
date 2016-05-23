@@ -2,11 +2,19 @@ TEMPLATE      = app
 
 TARGET        = RHD2000Interface 
 
-QT            += widgets multimedia
+QT            += widgets
 
 LIBS          += -L./ -l okFrontPanel -ldl
 
 CONFIG        += static
+
+# enable c++11
+QMAKE_CXXFLAGS += -std=c++11
+
+# Insert optimization flags
+QMAKE_CXXFLAGS_RELEASE -= -O1
+QMAKE_CXXFLAGS_RELEASE -= -O2
+QMAKE_CXXFLAGS_RELEASE *= -O3
 
 HEADERS       = \
     okFrontPanelDLL.h \
