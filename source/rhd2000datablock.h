@@ -21,7 +21,7 @@
 #ifndef RHD2000DATABLOCK_H
 #define RHD2000DATABLOCK_H
 
-#define SAMPLES_PER_DATA_BLOCK 60
+#define SAMPLES_PER_DATA_BLOCK 26//60
 #define RHD2000_HEADER_MAGIC_NUMBER 0xc691199927021942
 
 using namespace std;
@@ -42,7 +42,7 @@ public:
 
     static unsigned int calculateDataBlockSizeInWords(int numDataStreams);
     static unsigned int getSamplesPerDataBlock();
-    void fillFromUsbBuffer(unsigned char usbBuffer[], int blockIndex, int numDataStreams);
+    bool fillFromUsbBuffer(unsigned char usbBuffer[], int blockIndex, int numDataStreams);
     void print(int stream) const;
     void write(ofstream &saveOut, int numDataStreams) const;
     bool checkUsbHeader(unsigned char usbBuffer[], int index);

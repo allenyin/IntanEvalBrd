@@ -49,8 +49,8 @@ Rhd2000EvalBoard::Rhd2000EvalBoard()
     cableDelay.resize(4, -1);
 }
 
-// Find an Opal Kelly XEM6010-LX45 board attached to a USB port and open it.
-// Returns 1 if successful, -1 if FrontPanel cannot be loaded, and -2 if XEM6010 can't be found.
+// Find an Opal Kelly XEM6010-LX45 or XEM6310-LX150 board attached to a USB port and open it.
+// Returns 1 if successful, -1 if FrontPanel cannot be loaded, and -2 if XEM6010/XEM6310 can't be found.
 int Rhd2000EvalBoard::open()
 {
     char dll_date[32], dll_time[32];
@@ -79,12 +79,19 @@ int Rhd2000EvalBoard::open()
     }
     cout << endl;
 
-    // Find first device in list of type XEM6010LX45.
+    // Find first device in list of type XEM6010LX45 or XEM6310LX150
     for (i = 0; i < nDevices; ++i) {
+#ifdef XEM6310LX150
+        if (dev->GetDeviceListModel(i) == OK_PRODUCT_XEM6310LX150) {
+            serialNumber = dev->GetDeviceListSerial(i);
+            break;
+        }
+#else
         if (dev->GetDeviceListModel(i) == OK_PRODUCT_XEM6010LX45) {
             serialNumber = dev->GetDeviceListSerial(i);
             break;
         }
+#endif
     }
 
     cout << "Attempting to connect to device '" << serialNumber.c_str() << "'\n";
@@ -102,7 +109,8 @@ int Rhd2000EvalBoard::open()
     dev->LoadDefaultPLLConfiguration();
 
     // Get some general information about the XEM.
-    cout << "FPGA system clock: " << getSystemClockFreq() << " MHz" << endl; // Should indicate 100 MHz
+    cout << "FPGA system clock: " << getSystemClockFreq() << " MHz" << endl; // Should indicate 100 MHz for XEM6010.
+                                                                             // Returns 0 if XEM6310 b/c it has no PLL.
     cout << "Opal Kelly device firmware version: " << dev->GetDeviceMajorVersion() << "." <<
             dev->GetDeviceMinorVersion() << endl;
     cout << "Opal Kelly device serial number: " << dev->GetSerialNumber().c_str() << endl;
@@ -1329,9 +1337,9 @@ bool Rhd2000EvalBoard::readDataBlock(Rhd2000DataBlock *dataBlock)
 
     dev->ReadFromPipeOut(PipeOutData, numBytesToRead, usbBuffer);
 
-    dataBlock->fillFromUsbBuffer(usbBuffer, 0, numDataStreams);
+    return dataBlock->fillFromUsbBuffer(usbBuffer, 0, numDataStreams);
 
-    return true;
+    //return true;
 }
 
 // Reads a certain number of USB data blocks, if the specified number is available, and appends them

@@ -107,7 +107,9 @@ bool Rhd2000DataBlock::checkUsbHeader(unsigned char usbBuffer[], int index)
     x8 = usbBuffer[index + 7];
 
     header = (x8 << 56) + (x7 << 48) + (x6 << 40) + (x5 << 32) + (x4 << 24) + (x3 << 16) + (x2 << 8) + (x1 << 0);
-
+    if (header != RHD2000_HEADER_MAGIC_NUMBER) {
+        cout << "checkUsbHeader: got " << hex << header << endl;
+    }
     return (header == RHD2000_HEADER_MAGIC_NUMBER);
 }
 
@@ -137,14 +139,16 @@ int Rhd2000DataBlock::convertUsbWord(unsigned char usbBuffer[], int index)
 }
 
 // Fill data block with raw data from USB input buffer.
-void Rhd2000DataBlock::fillFromUsbBuffer(unsigned char usbBuffer[], int blockIndex, int numDataStreams)
+// Print how many datablocks we find with valid header
+bool Rhd2000DataBlock::fillFromUsbBuffer(unsigned char usbBuffer[], int blockIndex, int numDataStreams)
 {
     int index, t, channel, stream, i;
 
     index = blockIndex * 2 * calculateDataBlockSizeInWords(numDataStreams);
     for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
         if (!checkUsbHeader(usbBuffer, index)) {
-            cerr << "Error in Rhd2000EvalBoard::readDataBlock: Incorrect header." << endl;
+            cerr << "Error in Rhd2000EvalBoard::readDataBlock: Incorrect header. t=" << t << endl;
+            return false;
         }
         index += 8;
         timeStamp[t] = convertUsbTimeStamp(usbBuffer, index);
@@ -182,6 +186,8 @@ void Rhd2000DataBlock::fillFromUsbBuffer(unsigned char usbBuffer[], int blockInd
         ttlOut[t] = convertUsbWord(usbBuffer, index);
         index += 2;
     }
+    cout << "fillFromUsbBuffer: parsed " << t << " datablocks with valid header" << endl;
+    return true;
 }
 
 // Print the contents of RHD2000 registers from a selected USB data stream (0-7)

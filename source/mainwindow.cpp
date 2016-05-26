@@ -1749,7 +1749,7 @@ void MainWindow::openInterfaceBoard()
 {
     evalBoard = new Rhd2000EvalBoard;
 
-    // Open Opal Kelly XEM6010 board.
+    // Open Opal Kelly XEM6010 board or XEM6310 board.
     int errorCode = evalBoard->open();
 
     // cerr << "In MainWindow::openInterfaceBoard.  errorCode = " << errorCode << "\n";
@@ -1823,6 +1823,7 @@ void MainWindow::openInterfaceBoard()
 
     // Since our longest command sequence is 60 commands, we run the SPI
     // interface for 60 samples.
+/*
     evalBoard->setMaxTimeStep(60);
     evalBoard->setContinuousRunMode(false);
 
@@ -1835,12 +1836,48 @@ void MainWindow::openInterfaceBoard()
     }
 
     // Read the resulting single data block from the USB interface.
+    cout << "Openning interface board, numEnabledDataStreams=" << evalBoard->getNumEnabledDataStreams() << endl;
     Rhd2000DataBlock *dataBlock = new Rhd2000DataBlock(evalBoard->getNumEnabledDataStreams());
     evalBoard->readDataBlock(dataBlock);
-
+    cout << "Finished openning interface board 1" << endl;
+    
     // We don't need to do anything with this data block; it was used to configure
     // the RHD2000 amplifier chips and to run ADC calibration.
     delete dataBlock;
+*/
+
+    //---------------------------------------------------------------
+    // TEST: Run 30 samples at a time with 1 datastream enabled, see how many valid datablocks
+    // with valid header we can get. Each iteration would mean 30 valid datablocks
+    evalBoard->enableDataStream(1, true);  // 2 streams?
+    Rhd2000DataBlock *dataBlock = new Rhd2000DataBlock(evalBoard->getNumEnabledDataStreams());
+    int jj = 1;
+    bool validBlocks = true;
+    cout << "----TEST validBlocks---" << endl;
+    while (validBlocks) {
+        cout << "\nTEST validBlocks " << jj << ": " << endl;
+        evalBoard->setMaxTimeStep(SAMPLES_PER_DATA_BLOCK);
+        evalBoard->setContinuousRunMode(false);
+
+        // Start SPI interface.
+        evalBoard->run();
+
+        // Wait for the 60-sample run to complete.
+        while (evalBoard->isRunning()) {
+            qApp->processEvents();
+        }
+
+        // Read the resulting single data block from the USB interface.
+        validBlocks = evalBoard->readDataBlock(dataBlock);
+        jj = jj+1;
+    }
+    delete dataBlock;
+    cout << "---TEST validBlocks finished---" << endl << endl;
+//-----------------------------------------------------------
+
+    
+
+
 
     // Now that ADC calibration has been performed, we switch to the command sequence
     // that does not execute ADC calibration.
@@ -1962,6 +1999,8 @@ void MainWindow::findConnectedAmplifiers()
         evalBoard->enableDataStream(6, true);
         evalBoard->enableDataStream(7, true);
 
+        cout << "Finding connected amplifiers: number of enabled data streams=" << evalBoard->getNumEnabledDataStreams() << endl;
+
         evalBoard->selectAuxCommandBank(Rhd2000EvalBoard::PortA,
                                         Rhd2000EvalBoard::AuxCmd3, 0);
         evalBoard->selectAuxCommandBank(Rhd2000EvalBoard::PortB,
@@ -1984,6 +2023,7 @@ void MainWindow::findConnectedAmplifiers()
 
         // Run SPI command sequence at all 16 possible FPGA MISO delay settings
         // to find optimum delay for each SPI interface cable.
+        cout << "Checking for connected amplifier chips..." << endl;
         for (delay = 0; delay < 16; ++delay) {
             evalBoard->setCableDelay(Rhd2000EvalBoard::PortA, delay);
             evalBoard->setCableDelay(Rhd2000EvalBoard::PortB, delay);
@@ -1999,7 +2039,9 @@ void MainWindow::findConnectedAmplifiers()
             }
 
             // Read the resulting single data block from the USB interface.
+            cout << "In findConnectedAmplifiers()" << endl;
             evalBoard->readDataBlock(dataBlock);
+            cout << "Finished findConnectedAmplifiers() readDataBlock" << endl;
 
             // Read the Intan chip ID number from each RHD2000 chip found.
             // Record delay settings that yield good communication with the chip.
