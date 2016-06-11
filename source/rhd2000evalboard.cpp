@@ -36,11 +36,13 @@ using namespace std;
 // interface board running the Rhythm interface Verilog code.
 
 // Constructor.  Set sampling rate variable to 30.0 kS/s/channel (FPGA default).
-Rhd2000EvalBoard::Rhd2000EvalBoard()
+Rhd2000EvalBoard::Rhd2000EvalBoard(int blockSize)
 {
     int i;
     sampleRate = SampleRate30000Hz; // Rhythm FPGA boots up with 30.0 kS/s/channel sampling rate
     numDataStreams = 0;
+    usb3 = false;                 
+    BTblockSize = blockSize;
 
     for (i = 0; i < MAX_NUM_DATA_STREAMS; ++i) {
         dataStreamEnabled[i] = 0;
@@ -57,7 +59,7 @@ int Rhd2000EvalBoard::open()
     string serialNumber = "";
     int i, nDevices;
 
-    cout << "---- Intan Technologies ---- Rhythm RHD2000 Controller v1.0 ----" << endl << endl;
+    cout << "---- Intan Technologies ---- (Modified) Rhythm RHD2000 Controller v1.0 ----" << endl << endl;
     if (okFrontPanelDLL_LoadLib(NULL) == false) {
         cerr << "FrontPanel DLL could not be loaded.  " <<
                 "Make sure this DLL is in the application start directory." << endl;
@@ -81,17 +83,15 @@ int Rhd2000EvalBoard::open()
 
     // Find first device in list of type XEM6010LX45 or XEM6310LX150
     for (i = 0; i < nDevices; ++i) {
-#ifdef XEM6310LX150
         if (dev->GetDeviceListModel(i) == OK_PRODUCT_XEM6310LX150) {
             serialNumber = dev->GetDeviceListSerial(i);
+            usb3 = true;
             break;
         }
-#else
         if (dev->GetDeviceListModel(i) == OK_PRODUCT_XEM6010LX45) {
             serialNumber = dev->GetDeviceListSerial(i);
             break;
         }
-#endif
     }
 
     cout << "Attempting to connect to device '" << serialNumber.c_str() << "'\n";
@@ -1323,11 +1323,13 @@ void Rhd2000EvalBoard::flush()
 
 // Read data block from the USB interface, if one is available.  Returns true if data block
 // was available.
-bool Rhd2000EvalBoard::readDataBlock(Rhd2000DataBlock *dataBlock)
+bool Rhd2000EvalBoard::readDataBlock(Rhd2000DataBlock *dataBlock, int nSamples)
 {
     unsigned int numBytesToRead;
+    long res;
 
-    numBytesToRead = 2 * dataBlock->calculateDataBlockSizeInWords(numDataStreams);
+    numBytesToRead = 2 * dataBlock->calculateDataBlockSizeInWords(numDataStreams, usb3, nSamples);
+    printf("readDataBlock: numDataStreams=%d, numBytesToRead=%d bytes\n", numDataStreams, numBytesToRead);
 
     if (numBytesToRead > USB_BUFFER_SIZE) {
         cerr << "Error in Rhd2000EvalBoard::readDataBlock: USB buffer size exceeded.  " <<
@@ -1335,22 +1337,49 @@ bool Rhd2000EvalBoard::readDataBlock(Rhd2000DataBlock *dataBlock)
         return false;
     }
 
-    dev->ReadFromPipeOut(PipeOutData, numBytesToRead, usbBuffer);
+    if (usb3) {
+        printf("USB3 block pipe read: blockSize=%d bytes\n", BTblockSize);
+        res = dev->ReadFromBlockPipeOut(PipeOutData, BTblockSize, numBytesToRead, usbBuffer);
+    } else {
+        res = dev->ReadFromPipeOut(PipeOutData, numBytesToRead, usbBuffer);
+    }
 
-    return dataBlock->fillFromUsbBuffer(usbBuffer, 0, numDataStreams);
+    switch(res) {
+        case okCFrontPanel::InvalidBlockSize:
+            cerr << "CRITICAL: InvalidBlockSize" << endl;
+            break;
+        case okCFrontPanel::Failed:
+            cerr << "CRITICAL: PipeRead failed" << endl;
+            break;
+        case okCFrontPanel::Timeout:
+            cerr << "CRITICAL: PipeRead timeouted" << endl;
+            break;
+        default:
+            break;
+    }
+
+    return dataBlock->fillFromUsbBuffer(usbBuffer, 0, numDataStreams, nSamples);
 
     //return true;
 }
 
 // Reads a certain number of USB data blocks, if the specified number is available, and appends them
 // to queue.  Returns true if data blocks were available.
+// 
 bool Rhd2000EvalBoard::readDataBlocks(int numBlocks, queue<Rhd2000DataBlock> &dataQueue)
 {
     unsigned int numWordsToRead, numBytesToRead;
     int i;
+    long res;
     Rhd2000DataBlock *dataBlock;
-
-    numWordsToRead = numBlocks * dataBlock->calculateDataBlockSizeInWords(numDataStreams);
+    dataBlock = new Rhd2000DataBlock(numDataStreams, usb3);
+    numWordsToRead = numBlocks * dataBlock->calculateDataBlockSizeInWords(numDataStreams, usb3);
+    
+    if ( usb3 && ((numWordsToRead*2) % BTblockSize != 0)) {
+       cerr << "Error in Rhd2000EvalBoard::readDataBlocks: Requested read size is not divisible by\
+                BTPipe blocksize! BTblockSize=" << BTblockSize << "bytes" << endl;
+       return false; 
+    }
 
     if (numWordsInFifo() < numWordsToRead)
         return false;
@@ -1363,10 +1392,12 @@ bool Rhd2000EvalBoard::readDataBlocks(int numBlocks, queue<Rhd2000DataBlock> &da
         return false;
     }
 
+    if (usb3) {
+        res = dev->ReadFromBlockPipeOut(PipeOutData, BTblockSize, numBytesToRead, usbBuffer);
+    } else {
+        res = dev->ReadFromPipeOut(PipeOutData, numBytesToRead, usbBuffer);
+    }
 
-    dev->ReadFromPipeOut(PipeOutData, numBytesToRead, usbBuffer);
-
-    dataBlock = new Rhd2000DataBlock(numDataStreams);
 
     // USB data error checking added for version 1.5
 
@@ -1392,12 +1423,13 @@ bool Rhd2000EvalBoard::readDataBlocks(int numBlocks, queue<Rhd2000DataBlock> &da
     */
 
     // Look for proper 'magic number' header in all data blocks to check for USB glitches
-    unsigned int dataBlockSizeInBytes = 2 * dataBlock->calculateDataBlockSizeInWords(numDataStreams);
-    unsigned int sampleSizeInBytes = dataBlockSizeInBytes / SAMPLES_PER_DATA_BLOCK;
+    unsigned int samplesPerDataBlock = dataBlock->getSamplesPerDataBlock(usb3); 
+    unsigned int dataBlockSizeInBytes = 2 * dataBlock->calculateDataBlockSizeInWords(numDataStreams, usb3);
+    unsigned int sampleSizeInBytes = dataBlockSizeInBytes / samplesPerDataBlock; 
     int sample;
     int index = 0;
     int lag;
-    for (sample = 0; sample < numBlocks * SAMPLES_PER_DATA_BLOCK; ++sample) {
+    for (sample = 0; sample < numBlocks * samplesPerDataBlock; ++sample) {
         if (!(dataBlock->checkUsbHeader(usbBuffer, index))) {
             if (sample > 0) {
                 // If we have a bad data sample header on any sample but the first, we shouldn't trust
@@ -1417,7 +1449,13 @@ bool Rhd2000EvalBoard::readDataBlocks(int numBlocks, queue<Rhd2000DataBlock> &da
                 }
             }
             // Realign data and read additional words from the USB to refill buffer.
-            readAdditionalDataWords(lag, index, numBytesToRead);
+            if (!readAdditionalDataWords(lag, index, numBytesToRead)) {
+                // missing hole has size indivisible by blocksize
+                // clean up and return false, we discard this data.
+                // TODO: Better handling so we can salve this? Or mark it in data.
+                delete dataBlock;
+                return false;
+            }
         }
         index += sampleSizeInBytes;
     }
@@ -1444,9 +1482,14 @@ bool Rhd2000EvalBoard::readDataBlocks(int numBlocks, queue<Rhd2000DataBlock> &da
     return true;
 }
 
-void Rhd2000EvalBoard::readAdditionalDataWords(unsigned int numWords, unsigned int errorPoint, unsigned int bufferLength)
+bool Rhd2000EvalBoard::readAdditionalDataWords(unsigned int numWords, unsigned int errorPoint, unsigned int bufferLength)
 {
     unsigned int numBytes = 2 * numWords;
+    if (usb3 && (numBytes % BTblockSize != 0)) {
+        cerr << "Error in Rhd2000EvalBoard::readAdditionalDataWords: bytes requested is not divisible by\
+                 BTblockSize (" << BTblockSize << "bytes)!" << endl;
+        return false;
+    }
     // Shift all data beyond error point back by N words (2N bytes)...
     for (unsigned int i = errorPoint; i < bufferLength - numBytes; i += 2) {
         usbBuffer[i] = usbBuffer[i + numBytes];
@@ -1456,7 +1499,12 @@ void Rhd2000EvalBoard::readAdditionalDataWords(unsigned int numWords, unsigned i
     while (numWordsInFifo() < numWords) { }    // ...wait for data word to become available...
 
     // ...and read N more words (2N more bytes) from USB, and append it to the end.
-    dev->ReadFromPipeOut(PipeOutData, numBytes, &usbBuffer[bufferLength - numBytes]);
+    if (usb3) {
+        dev->ReadFromBlockPipeOut(PipeOutData, BTblockSize, numBytes, &usbBuffer[bufferLength - numBytes]);
+    } else {
+        dev->ReadFromPipeOut(PipeOutData, numBytes, &usbBuffer[bufferLength - numBytes]);
+    }
+    return true;
 }
 
 // Writes the contents of a data block queue (dataQueue) to a binary output stream (saveOut).
@@ -1578,3 +1626,9 @@ void Rhd2000EvalBoard::getCableDelay(vector<int> &delays) const
         delays[i] = cableDelay[i];
     }
 }
+
+// Return whether we have USB2 (XEM6010-LX45) or USB3 (XEM6310-LX150) board
+bool Rhd2000EvalBoard::isUSB3() 
+{
+    return usb3;
+}  

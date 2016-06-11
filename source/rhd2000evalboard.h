@@ -26,6 +26,11 @@
 #define MAX_NUM_DATA_STREAMS 8
 #define FIFO_CAPACITY_WORDS 67108864
 
+// Duplicate define from rhd2000datablock.h...should probably use an extern var
+//#define SAMPLES_PER_DATA_BLOCK_USB2 60
+//#define SAMPLES_PER_DATA_BLOCK_USB3 64
+//#define BLOCK_SIZE_USB3 512 // block throttled pipeout for USB3, in bytes
+
 #include <queue>
 //#include "okFrontPanelDLL.h"
 
@@ -38,7 +43,7 @@ class Rhd2000EvalBoard
 {
 
 public:
-    Rhd2000EvalBoard();
+    Rhd2000EvalBoard(int blockSize=512);
 
     int open();
     bool uploadFpgaBitfile(string filename);
@@ -148,12 +153,13 @@ public:
     void setTtlMode(int mode);
 
     void flush();
-    bool readDataBlock(Rhd2000DataBlock *dataBlock);
+    bool readDataBlock(Rhd2000DataBlock *dataBlock, int nSamples = -1);
     bool readDataBlocks(int numBlocks, queue<Rhd2000DataBlock> &dataQueue);
     int queueToFile(queue<Rhd2000DataBlock> &dataQueue, std::ofstream &saveOut);
     int getBoardMode() const;
     int getCableDelay(BoardPort port) const;
     void getCableDelay(vector<int> &delays) const;
+    bool isUSB3();
 
 private:
     okCFrontPanel *dev;
@@ -161,7 +167,7 @@ private:
     int numDataStreams; // total number of data streams currently enabled
     int dataStreamEnabled[MAX_NUM_DATA_STREAMS]; // 0 (disabled) or 1 (enabled)
     vector<int> cableDelay;
-
+    
     // Buffer for reading bytes from USB interface
     unsigned char usbBuffer[USB_BUFFER_SIZE];
 
@@ -226,7 +232,12 @@ private:
     bool isDcmProgDone() const;
     bool isDataClockLocked() const;
 
-    void readAdditionalDataWords(unsigned int numWords, unsigned int errorPoint, unsigned int bufferLength);
+    bool readAdditionalDataWords(unsigned int numWords, unsigned int errorPoint, unsigned int bufferLength);
+    
+    // Additions for USB3
+    bool usb3;
+    int BTblockSize; // throttld pipe blockSize in bytes, relevant if isUSB3=true
+
 };
 
 #endif // RHD2000EVALBOARD_H

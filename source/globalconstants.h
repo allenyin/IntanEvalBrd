@@ -29,7 +29,7 @@
 #define RADIANS_TO_DEGREES  57.2957795132
 
 // RHD2000 Evaluation Board constants
-#define SAMPLES_PER_DATA_BLOCK 26 // 60
+#define BTPIPE_BLOCK_SIZE_USB3 512// bytes
 #define MAX_NUM_DATA_STREAMS  8
 
 // Special Unicode characters, as QString data type

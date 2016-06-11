@@ -42,7 +42,7 @@
 
 // Constructor.
 WavePlot::WavePlot(SignalProcessor *inSignalProcessor, SignalSources *inSignalSources,
-                   MainWindow *inMainWindow, QWidget *parent) :
+                   MainWindow *inMainWindow, bool isusb3, QWidget *parent) :
     QWidget(parent)
 {
     setBackgroundRole(QPalette::Window);
@@ -59,6 +59,8 @@ WavePlot::WavePlot(SignalProcessor *inSignalProcessor, SignalSources *inSignalSo
 
     impedanceLabels = false;
     pointPlotMode = false;
+    
+    usb3 = isusb3;
 }
 
 // Initialize WavePlot object.
@@ -845,7 +847,7 @@ void WavePlot::drawWaveforms()
     QPainter painter(&pixmap);
     painter.initFrom(this);
 
-    int length = Rhd2000DataBlock::getSamplesPerDataBlock() * numUsbBlocksToPlot;
+    int length = Rhd2000DataBlock::getSamplesPerDataBlock(usb3) * numUsbBlocksToPlot;
 
     QPointF *polyline = new QPointF[length + 1];
 

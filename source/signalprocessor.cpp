@@ -51,7 +51,7 @@ using namespace std;
 // generating synthetic neural or ECG data for demonstration purposes.
 
 // Constructor.
-SignalProcessor::SignalProcessor()
+SignalProcessor::SignalProcessor(bool isusb3)
 {
     // Notch filter initial parameters.
     notchFilterEnabled = false;
@@ -73,6 +73,28 @@ SignalProcessor::SignalProcessor()
     // Other synthetic waveform variables.
     tPulse = 0.0;
     synthTimeStamp = 0;
+
+    usb3 = isusb3;
+    samplesPerDataBlock = Rhd2000DataBlock::getSamplesPerDataBlock(usb3);
+    
+    // allocate 1D array dataStreamBuffer
+    dataStreamBuffer = new char[2 * MAX_NUM_DATA_STREAMS * 32 * samplesPerDataBlock];
+    // allocate array of arrays dataStreamBufferArray. Note this is different from 2D array
+    // which occupies contiguous memory...not sure how this will impact speed.
+    dataStreamBufferArray = new char*[MAX_NUM_DATA_STREAMS * 32];
+    for (int i=0; i < (MAX_NUM_DATA_STREAMS * 32); ++i) {
+        dataStreamBufferArray[i] = new char[2 * samplesPerDataBlock* 16];
+    }
+}
+
+// Destructor
+SignalProcessor::~SignalProcessor() {
+    delete[] dataStreamBuffer;
+
+    for (int i=0; i < (MAX_NUM_DATA_STREAMS * 32); ++i) {
+        delete[] dataStreamBufferArray[i];
+    }
+    delete[] dataStreamBufferArray;
 }
 
 // Allocate memory to store waveform data.
@@ -85,18 +107,18 @@ void SignalProcessor::allocateMemory(int numStreams)
     const int maxNumBlocks = 120;
 
     // Allocate vector memory for waveforms from USB interface board and notch filter.
-    allocateDoubleArray3D(amplifierPreFilter, numStreams, 32, SAMPLES_PER_DATA_BLOCK * maxNumBlocks);
-    allocateDoubleArray3D(amplifierPostFilter, numStreams, 32, SAMPLES_PER_DATA_BLOCK * maxNumBlocks);
+    allocateDoubleArray3D(amplifierPreFilter, numStreams, 32, samplesPerDataBlock * maxNumBlocks);
+    allocateDoubleArray3D(amplifierPostFilter, numStreams, 32, samplesPerDataBlock * maxNumBlocks);
     allocateDoubleArray2D(highpassFilterState, numStreams, 32);
     allocateDoubleArray3D(prevAmplifierPreFilter, numStreams, 32, 2);
     allocateDoubleArray3D(prevAmplifierPostFilter, numStreams, 32, 2);
-    allocateDoubleArray3D(auxChannel, numStreams, 3, (SAMPLES_PER_DATA_BLOCK / 4) * maxNumBlocks);
+    allocateDoubleArray3D(auxChannel, numStreams, 3, (samplesPerDataBlock / 4) * maxNumBlocks);
     allocateDoubleArray2D(supplyVoltage, numStreams, maxNumBlocks);
     allocateDoubleArray1D(tempRaw, numStreams);
     allocateDoubleArray1D(tempAvg, numStreams);
-    allocateDoubleArray2D(boardAdc, 8, SAMPLES_PER_DATA_BLOCK * maxNumBlocks);
-    allocateIntArray2D(boardDigIn, 16, SAMPLES_PER_DATA_BLOCK * maxNumBlocks);
-    allocateIntArray2D(boardDigOut, 16, SAMPLES_PER_DATA_BLOCK * maxNumBlocks);
+    allocateDoubleArray2D(boardAdc, 8, samplesPerDataBlock * maxNumBlocks);
+    allocateIntArray2D(boardDigIn, 16, samplesPerDataBlock * maxNumBlocks);
+    allocateIntArray2D(boardDigOut, 16, samplesPerDataBlock * maxNumBlocks);
 
     // Initialize vector memory used in notch filter state.
     fillZerosDoubleArray3D(amplifierPostFilter);
@@ -581,7 +603,7 @@ int SignalProcessor::loadAmplifierData(queue<Rhd2000DataBlock> &dataQueue,
 
         // Load and scale RHD2000 amplifier waveforms
         // (sampled at amplifier sampling rate)
-        for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+        for (t = 0; t < samplesPerDataBlock; ++t) {
             for (channel = 0; channel < 32; ++channel) {
                 for (stream = 0; stream < numDataStreams; ++stream) {
                     // Amplifier waveform units = microvolts
@@ -594,7 +616,7 @@ int SignalProcessor::loadAmplifierData(queue<Rhd2000DataBlock> &dataQueue,
 
         // Load and scale RHD2000 auxiliary input waveforms
         // (sampled at 1/4 amplifier sampling rate)
-        for (t = 0; t < SAMPLES_PER_DATA_BLOCK; t += 4) {
+        for (t = 0; t < samplesPerDataBlock; t += 4) {
             for (stream = 0; stream < numDataStreams; ++stream) {
                 // Auxiliary input waveform units = volts
                 auxChannel[stream][0][indexAux] =
@@ -626,7 +648,7 @@ int SignalProcessor::loadAmplifierData(queue<Rhd2000DataBlock> &dataQueue,
 
         // Load and scale USB interface board ADC waveforms
         // (sampled at amplifier sampling rate)
-        for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+        for (t = 0; t < samplesPerDataBlock; ++t) {
             for (channel = 0; channel < 8; ++channel) {
                 // ADC waveform units = volts
                 boardAdc[channel][indexAdc] =
@@ -651,7 +673,7 @@ int SignalProcessor::loadAmplifierData(queue<Rhd2000DataBlock> &dataQueue,
         }
 
         // Load USB interface board digital input and output waveforms
-        for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+        for (t = 0; t < samplesPerDataBlock; ++t) {
             for (channel = 0; channel < 16; ++channel) {
                 boardDigIn[channel][indexDig] =
                         (dataQueue.front().ttlIn[t] & (1 << channel)) != 0;
@@ -682,7 +704,7 @@ int SignalProcessor::loadAmplifierData(queue<Rhd2000DataBlock> &dataQueue,
             case SaveFormatIntan:
                 // Save timestamp data
                 bufferIndex = 0;
-                for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                for (t = 0; t < samplesPerDataBlock; ++t) {
                     tempQint32 = ((qint32) dataQueue.front().timeStamp[t]) - ((qint32) timestampOffset);
                     dataStreamBuffer[bufferIndex++] = tempQint32 & 0x000000ff;          // Save qint 32 in little-endian format
                     dataStreamBuffer[bufferIndex++] = (tempQint32 & 0x0000ff00) >> 8;
@@ -690,12 +712,12 @@ int SignalProcessor::loadAmplifierData(queue<Rhd2000DataBlock> &dataQueue,
                     dataStreamBuffer[bufferIndex++] = (tempQint32 & 0xff000000) >> 24;
                 }
                 out.writeRawData(dataStreamBuffer, bufferIndex);     // Stream out all data at once to speed writing
-                numWordsWritten += 2 * SAMPLES_PER_DATA_BLOCK;
+                numWordsWritten += 2 * samplesPerDataBlock;
 
                 // Save amplifier data
                 bufferIndex = 0;
                 for (i = 0; i < saveListAmplifier.size(); ++i) {
-                    for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                    for (t = 0; t < samplesPerDataBlock; ++t) {
                         tempQuint16 = (quint16)
                             dataQueue.front().amplifierData[saveListAmplifier.at(i)->boardStream][saveListAmplifier.at(i)->chipChannel][t];
                         dataStreamBuffer[bufferIndex++] = tempQuint16 & 0x00ff;         // Save quint16 in little-endian format (LSByte first)
@@ -703,12 +725,12 @@ int SignalProcessor::loadAmplifierData(queue<Rhd2000DataBlock> &dataQueue,
                     }
                 }
                 out.writeRawData(dataStreamBuffer, bufferIndex);    // Stream out all data at once to speed writing
-                numWordsWritten += saveListAmplifier.size() * SAMPLES_PER_DATA_BLOCK;
+                numWordsWritten += saveListAmplifier.size() * samplesPerDataBlock;
 
                 // Save auxiliary input data
                 bufferIndex = 0;
                 for (i = 0; i < saveListAuxInput.size(); ++i) {
-                    for (t = 0; t < SAMPLES_PER_DATA_BLOCK; t += 4) {
+                    for (t = 0; t < samplesPerDataBlock; t += 4) {
                         tempQuint16 = (quint16)
                             dataQueue.front().auxiliaryData[saveListAuxInput.at(i)->boardStream][1][t + saveListAuxInput.at(i)->chipChannel + 1];
                         dataStreamBuffer[bufferIndex++] = tempQuint16 & 0x00ff;         // Save quint16 in little-endian format (LSByte first)
@@ -716,7 +738,7 @@ int SignalProcessor::loadAmplifierData(queue<Rhd2000DataBlock> &dataQueue,
                     }
                 }
                 out.writeRawData(dataStreamBuffer, bufferIndex);    // Stream out all data at once to speed writing
-                numWordsWritten += saveListAuxInput.size() * SAMPLES_PER_DATA_BLOCK;
+                numWordsWritten += saveListAuxInput.size() * samplesPerDataBlock;
 
                 // Save supply voltage data
                 for (i = 0; i < saveListSupplyVoltage.size(); ++i) {
@@ -738,7 +760,7 @@ int SignalProcessor::loadAmplifierData(queue<Rhd2000DataBlock> &dataQueue,
                 // Save board ADC data
                 bufferIndex = 0;
                 for (i = 0; i < saveListBoardAdc.size(); ++i) {
-                    for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                    for (t = 0; t < samplesPerDataBlock; ++t) {
                         tempQuint16 = (quint16)
                             dataQueue.front().boardAdcData[saveListBoardAdc.at(i)->nativeChannelNumber][t];
                         dataStreamBuffer[bufferIndex++] = tempQuint16 & 0x00ff;         // Save quint16 in little-endian format (LSByte first)
@@ -746,13 +768,13 @@ int SignalProcessor::loadAmplifierData(queue<Rhd2000DataBlock> &dataQueue,
                     }
                 }
                 out.writeRawData(dataStreamBuffer, bufferIndex);    // Stream out all data at once to speed writing
-                numWordsWritten += saveListBoardAdc.size() * SAMPLES_PER_DATA_BLOCK;
+                numWordsWritten += saveListBoardAdc.size() * samplesPerDataBlock;
 
                 // Save board digital input data
                 if (saveListBoardDigIn) {
                     // If ANY digital inputs are enabled, we save ALL 16 channels, since
                     // we are writing 16-bit chunks of data.
-                    for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                    for (t = 0; t < samplesPerDataBlock; ++t) {
                         out << (quint16) dataQueue.front().ttlIn[t];
                         ++numWordsWritten;
                     }
@@ -761,7 +783,7 @@ int SignalProcessor::loadAmplifierData(queue<Rhd2000DataBlock> &dataQueue,
                 // Save board digital output data, if saveTtlOut = true
                 if (saveTtlOut) {
                     // Save all 16 channels, since we are writing 16-bit chunks of data.
-                    for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                    for (t = 0; t < samplesPerDataBlock; ++t) {
                         out << (quint16) dataQueue.front().ttlOut[t];
                         ++numWordsWritten;
                     }
@@ -773,7 +795,7 @@ int SignalProcessor::loadAmplifierData(queue<Rhd2000DataBlock> &dataQueue,
                 int tAux;
                 // Save timestamp data
                 bufferIndex = 0;
-                for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                for (t = 0; t < samplesPerDataBlock; ++t) {
                     tempQint32 = ((qint32) dataQueue.front().timeStamp[t]) - ((qint32) timestampOffset);
                     dataStreamBuffer[bufferIndex++] = tempQint32 & 0x000000ff;          // Save qint 32 in little-endian format
                     dataStreamBuffer[bufferIndex++] = (tempQint32 & 0x0000ff00) >> 8;
@@ -781,11 +803,11 @@ int SignalProcessor::loadAmplifierData(queue<Rhd2000DataBlock> &dataQueue,
                     dataStreamBuffer[bufferIndex++] = (tempQint32 & 0xff000000) >> 24;
                 }
                 timestampStream->writeRawData(dataStreamBuffer, bufferIndex);     // Stream out all data at once to speed writing
-                numWordsWritten += 2 * SAMPLES_PER_DATA_BLOCK;
+                numWordsWritten += 2 * samplesPerDataBlock;
 
                 // Save amplifier data
                 bufferIndex = 0;
-                for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                for (t = 0; t < samplesPerDataBlock; ++t) {
                     for (i = 0; i < saveListAmplifier.size(); ++i) {
                         tempQint16 = (qint16)
                             (dataQueue.front().amplifierData[saveListAmplifier.at(i)->boardStream][saveListAmplifier.at(i)->chipChannel][t] - 32768);
@@ -795,12 +817,12 @@ int SignalProcessor::loadAmplifierData(queue<Rhd2000DataBlock> &dataQueue,
                 }
                 if (bufferIndex > 0) {
                     amplifierStream->writeRawData(dataStreamBuffer, bufferIndex);    // Stream out all data at once to speed writing
-                    numWordsWritten += saveListAmplifier.size() * SAMPLES_PER_DATA_BLOCK;
+                    numWordsWritten += saveListAmplifier.size() * samplesPerDataBlock;
                 }
 
                 // Save auxiliary input data
                 bufferIndex = 0;
-                for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                for (t = 0; t < samplesPerDataBlock; ++t) {
                     tAux = 4 * qFloor((double) t / 4.0);
                     for (i = 0; i < saveListAuxInput.size(); ++i) {
                         tempQuint16 = (quint16)
@@ -811,12 +833,12 @@ int SignalProcessor::loadAmplifierData(queue<Rhd2000DataBlock> &dataQueue,
                 }
                 if (bufferIndex > 0) {
                     auxInputStream->writeRawData(dataStreamBuffer, bufferIndex);    // Stream out all data at once to speed writing
-                    numWordsWritten += saveListAuxInput.size() * SAMPLES_PER_DATA_BLOCK;
+                    numWordsWritten += saveListAuxInput.size() * samplesPerDataBlock;
                 }
 
                 // Save supply voltage data
                 bufferIndex = 0;
-                for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                for (t = 0; t < samplesPerDataBlock; ++t) {
                     for (i = 0; i < saveListSupplyVoltage.size(); ++i) {
                         tempQuint16 = (quint16)
                             dataQueue.front().auxiliaryData[saveListSupplyVoltage.at(i)->boardStream][1][28];
@@ -826,14 +848,14 @@ int SignalProcessor::loadAmplifierData(queue<Rhd2000DataBlock> &dataQueue,
                 }
                 if (bufferIndex > 0) {
                     supplyStream->writeRawData(dataStreamBuffer, bufferIndex);    // Stream out all data at once to speed writing
-                    numWordsWritten += saveListSupplyVoltage.size() * SAMPLES_PER_DATA_BLOCK;
+                    numWordsWritten += saveListSupplyVoltage.size() * samplesPerDataBlock;
                 }
 
                 // Not saving temperature data in this save format.
 
                 // Save board ADC data
                 bufferIndex = 0;
-                for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                for (t = 0; t < samplesPerDataBlock; ++t) {
                     for (i = 0; i < saveListBoardAdc.size(); ++i) {
                         tempQuint16 = (quint16)
                             dataQueue.front().boardAdcData[saveListBoardAdc.at(i)->nativeChannelNumber][t];
@@ -843,11 +865,11 @@ int SignalProcessor::loadAmplifierData(queue<Rhd2000DataBlock> &dataQueue,
                 }
                 if (bufferIndex > 0) {
                     adcInputStream->writeRawData(dataStreamBuffer, bufferIndex);    // Stream out all data at once to speed writing
-                    numWordsWritten += saveListBoardAdc.size() * SAMPLES_PER_DATA_BLOCK;
+                    numWordsWritten += saveListBoardAdc.size() * samplesPerDataBlock;
                 }
 
                 // Save board digital input data
-                for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                for (t = 0; t < samplesPerDataBlock; ++t) {
                     if (saveListBoardDigIn) {
                         // If ANY digital inputs are enabled, we save ALL 16 channels, since
                         // we are writing 16-bit chunks of data.
@@ -859,7 +881,7 @@ int SignalProcessor::loadAmplifierData(queue<Rhd2000DataBlock> &dataQueue,
                 // Save board digital output data, if saveTtlOut = true
                 if (saveTtlOut) {
                     // Save all 16 channels, since we are writing 16-bit chunks of data.
-                    for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                    for (t = 0; t < samplesPerDataBlock; ++t) {
                         *(digitalOutputStream) << (quint16) dataQueue.front().ttlOut[t];
                         ++numWordsWritten;
                     }
@@ -870,7 +892,7 @@ int SignalProcessor::loadAmplifierData(queue<Rhd2000DataBlock> &dataQueue,
             case SaveFormatFilePerChannel:
                 // Save timestamp data
                 bufferIndex = 0;
-                for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                for (t = 0; t < samplesPerDataBlock; ++t) {
                     tempQint32 = ((qint32) dataQueue.front().timeStamp[t]) - ((qint32) timestampOffset);
                     dataStreamBuffer[bufferIndex++] = tempQint32 & 0x000000ff;          // Save qint 32 in little-endian format
                     dataStreamBuffer[bufferIndex++] = (tempQint32 & 0x0000ff00) >> 8;
@@ -878,24 +900,24 @@ int SignalProcessor::loadAmplifierData(queue<Rhd2000DataBlock> &dataQueue,
                     dataStreamBuffer[bufferIndex++] = (tempQint32 & 0xff000000) >> 24;
                 }
                 timestampStream->writeRawData(dataStreamBuffer, bufferIndex);    // Stream out all data at once to speed writing
-                numWordsWritten += 2 * SAMPLES_PER_DATA_BLOCK;
+                numWordsWritten += 2 * samplesPerDataBlock;
 
                 // Save amplifier data to dataStreamBufferArray; In in effort to increase write speed we will
                 // collect amplifier data from all data blocks and then write all data at the end of this function.
                 for (i = 0; i < saveListAmplifier.size(); ++i) {
-                    for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                    for (t = 0; t < samplesPerDataBlock; ++t) {
                         tempQint16 = (qint16)
                             (dataQueue.front().amplifierData[saveListAmplifier.at(i)->boardStream][saveListAmplifier.at(i)->chipChannel][t] - 32768);
                         dataStreamBufferArray[i][bufferArrayIndex[i]++] = tempQint16 & 0x00ff;         // Save qint16 in little-endian format (LSByte first)
                         dataStreamBufferArray[i][bufferArrayIndex[i]++] = (tempQint16 & 0xff00) >> 8;  // (MSByte last)
                     }
-                    numWordsWritten += SAMPLES_PER_DATA_BLOCK;
+                    numWordsWritten += samplesPerDataBlock;
                 }
 
                 // Save auxiliary input data
                 for (i = 0; i < saveListAuxInput.size(); ++i) {
                     bufferIndex = 0;
-                    for (t = 0; t < SAMPLES_PER_DATA_BLOCK; t += 4) {
+                    for (t = 0; t < samplesPerDataBlock; t += 4) {
                         for (j = 0; j < 4; ++j) {   // Aux data is sampled at 1/4 amplifier sampling rate; write each sample 4 times
                             tempQuint16 = (quint16)
                                 dataQueue.front().auxiliaryData[saveListAuxInput.at(i)->boardStream][1][t + saveListAuxInput.at(i)->chipChannel + 1];
@@ -904,20 +926,20 @@ int SignalProcessor::loadAmplifierData(queue<Rhd2000DataBlock> &dataQueue,
                         }
                     }
                     saveListAuxInput.at(i)->saveStream->writeRawData(dataStreamBuffer, bufferIndex);    // Stream out all data at once to speed writing
-                    numWordsWritten += SAMPLES_PER_DATA_BLOCK;
+                    numWordsWritten += samplesPerDataBlock;
                 }
 
                 // Save supply voltage data
                 for (i = 0; i < saveListSupplyVoltage.size(); ++i) {
                     bufferIndex = 0;
-                    for (j = 0; j < SAMPLES_PER_DATA_BLOCK; ++j) {   // Vdd data is sampled at 1/60 amplifier sampling rate; write each sample 60 times
+                    for (j = 0; j < samplesPerDataBlock; ++j) {   // Vdd data is sampled at 1/60 amplifier sampling rate; write each sample 60 times
                         tempQuint16 = (quint16)
                             dataQueue.front().auxiliaryData[saveListSupplyVoltage.at(i)->boardStream][1][28];
                         dataStreamBuffer[bufferIndex++] = tempQuint16 & 0x00ff;         // Save quint16 in little-endian format (LSByte first)
                         dataStreamBuffer[bufferIndex++] = (tempQuint16 & 0xff00) >> 8;  // (MSByte last)
                     }
                     saveListSupplyVoltage.at(i)->saveStream->writeRawData(dataStreamBuffer, bufferIndex);    // Stream out all data at once to speed writing
-                    numWordsWritten += SAMPLES_PER_DATA_BLOCK;
+                    numWordsWritten += samplesPerDataBlock;
                 }
 
                 // Not saving temperature data in this save format.
@@ -925,41 +947,41 @@ int SignalProcessor::loadAmplifierData(queue<Rhd2000DataBlock> &dataQueue,
                 // Save board ADC data
                 for (i = 0; i < saveListBoardAdc.size(); ++i) {
                     bufferIndex = 0;
-                    for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                    for (t = 0; t < samplesPerDataBlock; ++t) {
                         tempQuint16 = (quint16)
                             dataQueue.front().boardAdcData[saveListBoardAdc.at(i)->nativeChannelNumber][t];
                         dataStreamBuffer[bufferIndex++] = tempQuint16 & 0x00ff;         // Save quint16 in little-endian format (LSByte first)
                         dataStreamBuffer[bufferIndex++] = (tempQuint16 & 0xff00) >> 8;  // (MSByte last)
                     }
                     saveListBoardAdc.at(i)->saveStream->writeRawData(dataStreamBuffer, bufferIndex);    // Stream out all data at once to speed writing
-                    numWordsWritten += SAMPLES_PER_DATA_BLOCK;
+                    numWordsWritten += samplesPerDataBlock;
                 }
 
                 // Save board digital input data
                 for (i = 0; i < saveListBoardDigitalIn.size(); ++i) {
                     bufferIndex = 0;
-                    for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                    for (t = 0; t < samplesPerDataBlock; ++t) {
                         tempQuint16 = (quint16)
                             ((dataQueue.front().ttlIn[t] & (1 << saveListBoardDigitalIn.at(i)->nativeChannelNumber)) != 0);
                         dataStreamBuffer[bufferIndex++] = tempQuint16 & 0x00ff;         // Save quint16 in little-endian format (LSByte first)
                     dataStreamBuffer[bufferIndex++] = 0;  // (MSB of individual digital input will always be zero)
                     }
                     saveListBoardDigitalIn.at(i)->saveStream->writeRawData(dataStreamBuffer, bufferIndex);    // Stream out all data at once to speed writing
-                    numWordsWritten += SAMPLES_PER_DATA_BLOCK;
+                    numWordsWritten += samplesPerDataBlock;
                 }
 
                 // Save board digital output data, if saveTtlOut = true
                 if (saveTtlOut) {
                     for (i = 0; i < 16; ++i) {
                         bufferIndex = 0;
-                        for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                        for (t = 0; t < samplesPerDataBlock; ++t) {
                             tempQuint16 = (quint16)
                                 ((dataQueue.front().ttlOut[t] & (1 << i)) != 0);
                             dataStreamBuffer[bufferIndex++] = tempQuint16 & 0x00ff;         // Save quint16 in little-endian format (LSByte first)
                         dataStreamBuffer[bufferIndex++] = 0;  // (MSB of individual digital input will always be zero)
                         }
                         saveListBoardDigitalOut.at(i)->saveStream->writeRawData(dataStreamBuffer, bufferIndex);    // Stream out all data at once to speed writing
-                        numWordsWritten += SAMPLES_PER_DATA_BLOCK;
+                        numWordsWritten += samplesPerDataBlock;
                     }
                 }
 
@@ -1004,7 +1026,7 @@ int SignalProcessor::saveBufferedData(queue<Rhd2000DataBlock> &bufferQueue, QDat
         while (bufferQueue.empty() == false) {
             // Save timestamp data
             bufferIndex = 0;
-            for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+            for (t = 0; t < samplesPerDataBlock; ++t) {
                 tempQint32 = ((qint32) bufferQueue.front().timeStamp[t]) - ((qint32) timestampOffset);
                 dataStreamBuffer[bufferIndex++] = tempQint32 & 0x000000ff;          // Save qint 32 in little-endian format
                 dataStreamBuffer[bufferIndex++] = (tempQint32 & 0x0000ff00) >> 8;
@@ -1012,12 +1034,12 @@ int SignalProcessor::saveBufferedData(queue<Rhd2000DataBlock> &bufferQueue, QDat
                 dataStreamBuffer[bufferIndex++] = (tempQint32 & 0xff000000) >> 24;
             }
             out.writeRawData(dataStreamBuffer, bufferIndex);     // Stream out all data at once to speed writing
-            numWordsWritten += 2 * SAMPLES_PER_DATA_BLOCK;
+            numWordsWritten += 2 * samplesPerDataBlock;
 
             // Save amplifier data
             bufferIndex = 0;
             for (i = 0; i < saveListAmplifier.size(); ++i) {
-                for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                for (t = 0; t < samplesPerDataBlock; ++t) {
                     tempQuint16 = (quint16)
                         bufferQueue.front().amplifierData[saveListAmplifier.at(i)->boardStream][saveListAmplifier.at(i)->chipChannel][t];
                     dataStreamBuffer[bufferIndex++] = tempQuint16 & 0x00ff;         // Save quint16 in little-endian format (LSByte first)
@@ -1025,12 +1047,12 @@ int SignalProcessor::saveBufferedData(queue<Rhd2000DataBlock> &bufferQueue, QDat
                 }
             }
             out.writeRawData(dataStreamBuffer, bufferIndex);    // Stream out all data at once to speed writing
-            numWordsWritten += saveListAmplifier.size() * SAMPLES_PER_DATA_BLOCK;
+            numWordsWritten += saveListAmplifier.size() * samplesPerDataBlock;
 
             // Save auxiliary input data
             bufferIndex = 0;
             for (i = 0; i < saveListAuxInput.size(); ++i) {
-                for (t = 0; t < SAMPLES_PER_DATA_BLOCK; t += 4) {
+                for (t = 0; t < samplesPerDataBlock; t += 4) {
                     tempQuint16 = (quint16)
                         bufferQueue.front().auxiliaryData[saveListAuxInput.at(i)->boardStream][1][t + saveListAuxInput.at(i)->chipChannel + 1];
                     dataStreamBuffer[bufferIndex++] = tempQuint16 & 0x00ff;         // Save quint16 in little-endian format (LSByte first)
@@ -1038,7 +1060,7 @@ int SignalProcessor::saveBufferedData(queue<Rhd2000DataBlock> &bufferQueue, QDat
                 }
             }
             out.writeRawData(dataStreamBuffer, bufferIndex);    // Stream out all data at once to speed writing
-            numWordsWritten += saveListAuxInput.size() * SAMPLES_PER_DATA_BLOCK;
+            numWordsWritten += saveListAuxInput.size() * samplesPerDataBlock;
 
             // Save supply voltage data
             for (i = 0; i < saveListSupplyVoltage.size(); ++i) {
@@ -1074,7 +1096,7 @@ int SignalProcessor::saveBufferedData(queue<Rhd2000DataBlock> &bufferQueue, QDat
             // Save board ADC data
             bufferIndex = 0;
             for (i = 0; i < saveListBoardAdc.size(); ++i) {
-                for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                for (t = 0; t < samplesPerDataBlock; ++t) {
                     tempQuint16 = (quint16)
                         bufferQueue.front().boardAdcData[saveListBoardAdc.at(i)->nativeChannelNumber][t];
                     dataStreamBuffer[bufferIndex++] = tempQuint16 & 0x00ff;         // Save quint16 in little-endian format (LSByte first)
@@ -1082,13 +1104,13 @@ int SignalProcessor::saveBufferedData(queue<Rhd2000DataBlock> &bufferQueue, QDat
                 }
             }
             out.writeRawData(dataStreamBuffer, bufferIndex);    // Stream out all data at once to speed writing
-            numWordsWritten += saveListBoardAdc.size() * SAMPLES_PER_DATA_BLOCK;
+            numWordsWritten += saveListBoardAdc.size() * samplesPerDataBlock;
 
             // Save board digital input data
             if (saveListBoardDigIn) {
                 // If ANY digital inputs are enabled, we save ALL 16 channels, since
                 // we are writing 16-bit chunks of data.
-                for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                for (t = 0; t < samplesPerDataBlock; ++t) {
                     out << (quint16) bufferQueue.front().ttlIn[t];
                     ++numWordsWritten;
                 }
@@ -1097,7 +1119,7 @@ int SignalProcessor::saveBufferedData(queue<Rhd2000DataBlock> &bufferQueue, QDat
             // Save board digital output data, is saveTtlOut = true
             if (saveTtlOut) {
                 // We save all 16 channels, since we are writing 16-bit chunks of data.
-                for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                for (t = 0; t < samplesPerDataBlock; ++t) {
                     out << (quint16) bufferQueue.front().ttlOut[t];
                     ++numWordsWritten;
                 }
@@ -1112,7 +1134,7 @@ int SignalProcessor::saveBufferedData(queue<Rhd2000DataBlock> &bufferQueue, QDat
 
             // Save timestamp data
             bufferIndex = 0;
-            for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+            for (t = 0; t < samplesPerDataBlock; ++t) {
                 tempQint32 = ((qint32) bufferQueue.front().timeStamp[t]) - ((qint32) timestampOffset);
                 dataStreamBuffer[bufferIndex++] = tempQint32 & 0x000000ff;          // Save qint 32 in little-endian format
                 dataStreamBuffer[bufferIndex++] = (tempQint32 & 0x0000ff00) >> 8;
@@ -1120,11 +1142,11 @@ int SignalProcessor::saveBufferedData(queue<Rhd2000DataBlock> &bufferQueue, QDat
                 dataStreamBuffer[bufferIndex++] = (tempQint32 & 0xff000000) >> 24;
             }
             timestampStream->writeRawData(dataStreamBuffer, bufferIndex);     // Stream out all data at once to speed writing
-            numWordsWritten += 2 * SAMPLES_PER_DATA_BLOCK;
+            numWordsWritten += 2 * samplesPerDataBlock;
 
             // Save amplifier data
             bufferIndex = 0;
-            for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+            for (t = 0; t < samplesPerDataBlock; ++t) {
                 for (i = 0; i < saveListAmplifier.size(); ++i) {
                     tempQint16 = (qint16)
                         (bufferQueue.front().amplifierData[saveListAmplifier.at(i)->boardStream][saveListAmplifier.at(i)->chipChannel][t] - 32768);
@@ -1134,12 +1156,12 @@ int SignalProcessor::saveBufferedData(queue<Rhd2000DataBlock> &bufferQueue, QDat
             }
             if (bufferIndex > 0) {
                 amplifierStream->writeRawData(dataStreamBuffer, bufferIndex);    // Stream out all data at once to speed writing
-                numWordsWritten += saveListAmplifier.size() * SAMPLES_PER_DATA_BLOCK;
+                numWordsWritten += saveListAmplifier.size() * samplesPerDataBlock;
             }
 
             // Save auxiliary input data
             bufferIndex = 0;
-            for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+            for (t = 0; t < samplesPerDataBlock; ++t) {
                 tAux = 4 * qFloor((double) t / 4.0);
                 for (i = 0; i < saveListAuxInput.size(); ++i) {
                     tempQuint16 = (quint16)
@@ -1150,12 +1172,12 @@ int SignalProcessor::saveBufferedData(queue<Rhd2000DataBlock> &bufferQueue, QDat
             }
             if (bufferIndex > 0) {
                 auxInputStream->writeRawData(dataStreamBuffer, bufferIndex);    // Stream out all data at once to speed writing
-                numWordsWritten += saveListAuxInput.size() * SAMPLES_PER_DATA_BLOCK;
+                numWordsWritten += saveListAuxInput.size() * samplesPerDataBlock;
             }
 
             // Save supply voltage data
             bufferIndex = 0;
-            for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+            for (t = 0; t < samplesPerDataBlock; ++t) {
                 for (i = 0; i < saveListSupplyVoltage.size(); ++i) {
                     tempQuint16 = (quint16)
                         bufferQueue.front().auxiliaryData[saveListSupplyVoltage.at(i)->boardStream][1][28];
@@ -1165,14 +1187,14 @@ int SignalProcessor::saveBufferedData(queue<Rhd2000DataBlock> &bufferQueue, QDat
             }
             if (bufferIndex > 0) {
                 supplyStream->writeRawData(dataStreamBuffer, bufferIndex);    // Stream out all data at once to speed writing
-                numWordsWritten += saveListSupplyVoltage.size() * SAMPLES_PER_DATA_BLOCK;
+                numWordsWritten += saveListSupplyVoltage.size() * samplesPerDataBlock;
             }
 
             // Not saving temperature data in this save format.
 
             // Save board ADC data
             bufferIndex = 0;
-            for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+            for (t = 0; t < samplesPerDataBlock; ++t) {
                 for (i = 0; i < saveListBoardAdc.size(); ++i) {
                     tempQuint16 = (quint16)
                         bufferQueue.front().boardAdcData[saveListBoardAdc.at(i)->nativeChannelNumber][t];
@@ -1182,12 +1204,12 @@ int SignalProcessor::saveBufferedData(queue<Rhd2000DataBlock> &bufferQueue, QDat
             }
             if (bufferIndex > 0) {
                 adcInputStream->writeRawData(dataStreamBuffer, bufferIndex);    // Stream out all data at once to speed writing
-                numWordsWritten += saveListBoardAdc.size() * SAMPLES_PER_DATA_BLOCK;
+                numWordsWritten += saveListBoardAdc.size() * samplesPerDataBlock;
             }
 
             // Save board digital input data
             if (saveListBoardDigIn) {
-                for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                for (t = 0; t < samplesPerDataBlock; ++t) {
                     // If ANY digital inputs are enabled, we save ALL 16 channels, since
                     // we are writing 16-bit chunks of data.
                     *(digitalInputStream) << (quint16) bufferQueue.front().ttlIn[t];
@@ -1197,7 +1219,7 @@ int SignalProcessor::saveBufferedData(queue<Rhd2000DataBlock> &bufferQueue, QDat
 
             // Save board digital output data, if saveTtlOut = true
             if (saveTtlOut) {
-                for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                for (t = 0; t < samplesPerDataBlock; ++t) {
                     // We save all 16 channels, since we are writing 16-bit chunks of data.
                     *(digitalOutputStream) << (quint16) bufferQueue.front().ttlOut[t];
                     ++numWordsWritten;
@@ -1213,7 +1235,7 @@ int SignalProcessor::saveBufferedData(queue<Rhd2000DataBlock> &bufferQueue, QDat
         while (bufferQueue.empty() == false) {
             // Save timestamp data
             bufferIndex = 0;
-            for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+            for (t = 0; t < samplesPerDataBlock; ++t) {
                 tempQint32 = ((qint32) bufferQueue.front().timeStamp[t]) - ((qint32) timestampOffset);
                 dataStreamBuffer[bufferIndex++] = tempQint32 & 0x000000ff;          // Save qint 32 in little-endian format
                 dataStreamBuffer[bufferIndex++] = (tempQint32 & 0x0000ff00) >> 8;
@@ -1221,25 +1243,25 @@ int SignalProcessor::saveBufferedData(queue<Rhd2000DataBlock> &bufferQueue, QDat
                 dataStreamBuffer[bufferIndex++] = (tempQint32 & 0xff000000) >> 24;
             }
             timestampStream->writeRawData(dataStreamBuffer, bufferIndex);    // Stream out all data at once to speed writing
-            numWordsWritten += 2 * SAMPLES_PER_DATA_BLOCK;
+            numWordsWritten += 2 * samplesPerDataBlock;
 
             // Save amplifier data
             for (i = 0; i < saveListAmplifier.size(); ++i) {
                 bufferIndex = 0;
-                for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                for (t = 0; t < samplesPerDataBlock; ++t) {
                     tempQint16 = (qint16)
                         (bufferQueue.front().amplifierData[saveListAmplifier.at(i)->boardStream][saveListAmplifier.at(i)->chipChannel][t] - 32768);
                     dataStreamBuffer[bufferIndex++] = tempQint16 & 0x00ff;         // Save qint16 in little-endian format (LSByte first)
                     dataStreamBuffer[bufferIndex++] = (tempQint16 & 0xff00) >> 8;  // (MSByte last)
                 }
                 saveListAmplifier.at(i)->saveStream->writeRawData(dataStreamBuffer, bufferIndex);    // Stream out all data at once to speed writing
-                numWordsWritten += SAMPLES_PER_DATA_BLOCK;
+                numWordsWritten += samplesPerDataBlock;
             }
 
             // Save auxiliary input data
             for (i = 0; i < saveListAuxInput.size(); ++i) {
                 bufferIndex = 0;
-                for (t = 0; t < SAMPLES_PER_DATA_BLOCK; t += 4) {
+                for (t = 0; t < samplesPerDataBlock; t += 4) {
                     for (j = 0; j < 4; ++j) {   // Aux data is sampled at 1/4 amplifier sampling rate; write each sample 4 times
                         tempQuint16 = (quint16)
                             bufferQueue.front().auxiliaryData[saveListAuxInput.at(i)->boardStream][1][t + saveListAuxInput.at(i)->chipChannel + 1];
@@ -1248,20 +1270,20 @@ int SignalProcessor::saveBufferedData(queue<Rhd2000DataBlock> &bufferQueue, QDat
                     }
                 }
                 saveListAuxInput.at(i)->saveStream->writeRawData(dataStreamBuffer, bufferIndex);    // Stream out all data at once to speed writing
-                numWordsWritten += SAMPLES_PER_DATA_BLOCK;
+                numWordsWritten += samplesPerDataBlock;
             }
 
             // Save supply voltage data
             for (i = 0; i < saveListSupplyVoltage.size(); ++i) {
                 bufferIndex = 0;
-                for (j = 0; j < SAMPLES_PER_DATA_BLOCK; ++j) {   // Vdd data is sampled at 1/60 amplifier sampling rate; write each sample 60 times
+                for (j = 0; j < samplesPerDataBlock; ++j) {   // Vdd data is sampled at 1/60 amplifier sampling rate; write each sample 60 times
                     tempQuint16 = (quint16)
                         bufferQueue.front().auxiliaryData[saveListSupplyVoltage.at(i)->boardStream][1][28];
                     dataStreamBuffer[bufferIndex++] = tempQuint16 & 0x00ff;         // Save quint16 in little-endian format (LSByte first)
                     dataStreamBuffer[bufferIndex++] = (tempQuint16 & 0xff00) >> 8;  // (MSByte last)
                 }
                 saveListSupplyVoltage.at(i)->saveStream->writeRawData(dataStreamBuffer, bufferIndex);    // Stream out all data at once to speed writing
-                numWordsWritten += SAMPLES_PER_DATA_BLOCK;
+                numWordsWritten += samplesPerDataBlock;
             }
 
             // Not saving temperature data in this save format.
@@ -1269,41 +1291,41 @@ int SignalProcessor::saveBufferedData(queue<Rhd2000DataBlock> &bufferQueue, QDat
             // Save board ADC data
             for (i = 0; i < saveListBoardAdc.size(); ++i) {
                 bufferIndex = 0;
-                for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                for (t = 0; t < samplesPerDataBlock; ++t) {
                     tempQuint16 = (quint16)
                         bufferQueue.front().boardAdcData[saveListBoardAdc.at(i)->nativeChannelNumber][t];
                     dataStreamBuffer[bufferIndex++] = tempQuint16 & 0x00ff;         // Save quint16 in little-endian format (LSByte first)
                     dataStreamBuffer[bufferIndex++] = (tempQuint16 & 0xff00) >> 8;  // (MSByte last)
                 }
                 saveListBoardAdc.at(i)->saveStream->writeRawData(dataStreamBuffer, bufferIndex);    // Stream out all data at once to speed writing
-                numWordsWritten += SAMPLES_PER_DATA_BLOCK;
+                numWordsWritten += samplesPerDataBlock;
             }
 
             // Save board digital input data
             for (i = 0; i < saveListBoardDigitalIn.size(); ++i) {
                 bufferIndex = 0;
-                for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                for (t = 0; t < samplesPerDataBlock; ++t) {
                     tempQuint16 = (quint16)
                         ((bufferQueue.front().ttlIn[t] & (1 << saveListBoardDigitalIn.at(i)->nativeChannelNumber)) != 0);
                     dataStreamBuffer[bufferIndex++] = tempQuint16 & 0x00ff;         // Save quint16 in little-endian format (LSByte first)
                     dataStreamBuffer[bufferIndex++] = 0;  // (MSB of individual digital input will always be zero)
                 }
                 saveListBoardDigitalIn.at(i)->saveStream->writeRawData(dataStreamBuffer, bufferIndex);    // Stream out all data at once to speed writing
-                numWordsWritten += SAMPLES_PER_DATA_BLOCK;
+                numWordsWritten += samplesPerDataBlock;
             }
 
             // Save board digital output data, if saveTtlOut = true
             if (saveTtlOut) {
                 for (i = 0; i < 16; ++i) {
                     bufferIndex = 0;
-                    for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                    for (t = 0; t < samplesPerDataBlock; ++t) {
                         tempQuint16 = (quint16)
                             ((bufferQueue.front().ttlOut[t] & (1 << i)) != 0);
                         dataStreamBuffer[bufferIndex++] = tempQuint16 & 0x00ff;         // Save quint16 in little-endian format (LSByte first)
                         dataStreamBuffer[bufferIndex++] = 0;  // (MSB of individual digital input will always be zero)
                     }
                     saveListBoardDigitalOut.at(i)->saveStream->writeRawData(dataStreamBuffer, bufferIndex);    // Stream out all data at once to speed writing
-                    numWordsWritten += SAMPLES_PER_DATA_BLOCK;
+                    numWordsWritten += samplesPerDataBlock;
                 }
             }
 
@@ -1351,15 +1373,15 @@ int SignalProcessor::loadSyntheticData(int numBlocks, double sampleRate,
                         spikeDelay = random->randomUniform(0.0, 0.3);  // add some random time jitter
                         if (random->randomUniform() < 0.3) spikeNum = 1;  // choose between one of two spike types
                     }
-                    for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                    for (t = 0; t < samplesPerDataBlock; ++t) {
                         // Create realistic background Gaussian noise of 2.4 uVrms (would be more in cortex)
-                        amplifierPreFilter[stream][channel][SAMPLES_PER_DATA_BLOCK * block + t] =
+                        amplifierPreFilter[stream][channel][samplesPerDataBlock * block + t] =
                                 2.4 * random->randomGaussian();
                         if (spikePresent) {
                             // Create synthetic spike
                             if (t * tStepMsec > spikeDelay &&
                                 t * tStepMsec < synthSpikeDuration[stream][channel][spikeNum] + spikeDelay) {
-                                amplifierPreFilter[stream][channel][SAMPLES_PER_DATA_BLOCK * block + t] +=
+                                amplifierPreFilter[stream][channel][samplesPerDataBlock * block + t] +=
                                         synthSpikeAmplitude.at(stream).at(channel).at(spikeNum) *
                                         qExp(-2.0 * (t * tStepMsec - spikeDelay)) *
                                         qSin(TWO_PI * (t * tStepMsec - spikeDelay) /
@@ -1372,7 +1394,7 @@ int SignalProcessor::loadSyntheticData(int numBlocks, double sampleRate,
         }
     } else {
         // Generate synthetic ECG data.
-        for (t = 0; t < SAMPLES_PER_DATA_BLOCK * numBlocks; ++t) {
+        for (t = 0; t < samplesPerDataBlock * numBlocks; ++t) {
             // Piece together half sine waves to model QRS complex, P wave, and T wave
             if (tPulse < 80.0) {
                 ecgValue = 40.0 * qSin(TWO_PI * tPulse / 160.0); // P wave
@@ -1405,7 +1427,7 @@ int SignalProcessor::loadSyntheticData(int numBlocks, double sampleRate,
 
     for (block = 0; block < numBlocks; ++block) {
         // Generate synthetic auxiliary input data.
-        for (t = 0; t < SAMPLES_PER_DATA_BLOCK; t += 4) {
+        for (t = 0; t < samplesPerDataBlock; t += 4) {
             for (stream = 0; stream < numDataStreams; ++stream) {
                 // Just use DC values.
                 auxChannel[stream][0][indexAux] = 0.5;
@@ -1426,7 +1448,7 @@ int SignalProcessor::loadSyntheticData(int numBlocks, double sampleRate,
         tempHistoryCalcAvg();
 
         // Generate synthetic USB interface board ADC data.
-        for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+        for (t = 0; t < samplesPerDataBlock; ++t) {
             for (channel = 0; channel < 8; ++channel) {
                 boardAdc[channel][indexAdc] = 0.0;
             }
@@ -1434,7 +1456,7 @@ int SignalProcessor::loadSyntheticData(int numBlocks, double sampleRate,
         }
 
         // Generate synthetic USB interface board digital I/O data.
-        for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+        for (t = 0; t < samplesPerDataBlock; ++t) {
             for (channel = 0; channel < 16; ++channel) {
                 boardDigIn[channel][indexDig] = 0;
                 boardDigOut[channel][indexDig] = 0;
@@ -1449,13 +1471,13 @@ int SignalProcessor::loadSyntheticData(int numBlocks, double sampleRate,
         case SaveFormatIntan:
             for (block = 0; block < numBlocks; ++block) {
                 // Save timestamp data
-                for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                for (t = 0; t < samplesPerDataBlock; ++t) {
                     out << (qint32) (synthTimeStamp++);
                     numWordsWritten += 2;
                 }
                 // Save amplifier data
                 for (i = 0; i < saveListAmplifier.size(); ++i) {
-                    for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                    for (t = 0; t < samplesPerDataBlock; ++t) {
                         out << (quint16)
                                ((amplifierPreFilter[saveListAmplifier.at(i)->boardStream][saveListAmplifier.at(i)->chipChannel][60 * block + t] / 0.195) + 32768);
                         ++numWordsWritten;
@@ -1463,7 +1485,7 @@ int SignalProcessor::loadSyntheticData(int numBlocks, double sampleRate,
                 }
                 // Save auxiliary input data
                 for (i = 0; i < saveListAuxInput.size(); ++i) {
-                    for (t = 0; t < (SAMPLES_PER_DATA_BLOCK / 4); ++t) {
+                    for (t = 0; t < (samplesPerDataBlock / 4); ++t) {
                         out << (quint16)
                                (auxChannel[saveListAuxInput.at(i)->boardStream][saveListAuxInput.at(i)->chipChannel][15 * block + t] / 0.0000374);
                         ++numWordsWritten;
@@ -1485,7 +1507,7 @@ int SignalProcessor::loadSyntheticData(int numBlocks, double sampleRate,
                 }
                 // Save board ADC data
                 for (i = 0; i < saveListBoardAdc.size(); ++i) {
-                    for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                    for (t = 0; t < samplesPerDataBlock; ++t) {
                         out << (quint16) 0;
                         ++numWordsWritten;
                     }
@@ -1494,7 +1516,7 @@ int SignalProcessor::loadSyntheticData(int numBlocks, double sampleRate,
                 if (saveListBoardDigIn) {
                     // If ANY digital inputs are enabled, we save ALL 16 channels, since
                     // we are writing 16-bit chunks of data.
-                    for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                    for (t = 0; t < samplesPerDataBlock; ++t) {
                         out << (quint16) 0;
                         ++numWordsWritten;
                     }
@@ -1502,7 +1524,7 @@ int SignalProcessor::loadSyntheticData(int numBlocks, double sampleRate,
                 // Save board digital output data
                 if (saveTtlOut) {
                     // We save all 16 channels, since we are writing 16-bit chunks of data.
-                    for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                    for (t = 0; t < samplesPerDataBlock; ++t) {
                         out << (quint16) 0;
                         ++numWordsWritten;
                     }
@@ -1514,12 +1536,12 @@ int SignalProcessor::loadSyntheticData(int numBlocks, double sampleRate,
         case SaveFormatFilePerSignalType:
             for (block = 0; block < numBlocks; ++block) {
                 // Save timestamp data
-                for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                for (t = 0; t < samplesPerDataBlock; ++t) {
                     *(timestampStream) << (qint32) (synthTimeStamp++);
                     numWordsWritten += 2;
                 }
 
-                for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                for (t = 0; t < samplesPerDataBlock; ++t) {
                     // Save amplifier data
                     for (i = 0; i < saveListAmplifier.size(); ++i) {
                         *(amplifierStream) << (qint16)
@@ -1563,14 +1585,14 @@ int SignalProcessor::loadSyntheticData(int numBlocks, double sampleRate,
         case SaveFormatFilePerChannel:
             for (block = 0; block < numBlocks; ++block) {
                 // Save timestamp data
-                for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                for (t = 0; t < samplesPerDataBlock; ++t) {
                     *(timestampStream) << (qint32) (synthTimeStamp++);
                     numWordsWritten += 2;
                 }
 
                 // Save amplifier data
                 for (i = 0; i < saveListAmplifier.size(); ++i) {
-                    for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                    for (t = 0; t < samplesPerDataBlock; ++t) {
                         *(saveListAmplifier.at(i)->saveStream) << (qint16)
                             (amplifierPreFilter[saveListAmplifier.at(i)->boardStream][saveListAmplifier.at(i)->chipChannel][60 * block + t] / 0.195);
                         ++numWordsWritten;
@@ -1578,7 +1600,7 @@ int SignalProcessor::loadSyntheticData(int numBlocks, double sampleRate,
                 }
                 // Save auxiliary input data
                 for (i = 0; i < saveListAuxInput.size(); ++i) {
-                    for (t = 0; t < SAMPLES_PER_DATA_BLOCK / 4; ++t) {
+                    for (t = 0; t < samplesPerDataBlock / 4; ++t) {
                         for (j = 0; j < 4; ++j) {   // Aux data is sampled at 1/4 amplifier sampling rate; write each sample 4 times
                             *(saveListAuxInput.at(i)->saveStream) << (quint16)
                                 (auxChannel[saveListAuxInput.at(i)->boardStream][saveListAuxInput.at(i)->chipChannel][15 * block + t] / 0.0000374);
@@ -1588,7 +1610,7 @@ int SignalProcessor::loadSyntheticData(int numBlocks, double sampleRate,
                 }
                 // Save supply voltage data
                 for (i = 0; i < saveListSupplyVoltage.size(); ++i) {
-                    for (j = 0; j < SAMPLES_PER_DATA_BLOCK; ++j) {   // Vdd data is sampled at 1/60 amplifier sampling rate; write each sample 60 times
+                    for (j = 0; j < samplesPerDataBlock; ++j) {   // Vdd data is sampled at 1/60 amplifier sampling rate; write each sample 60 times
                         *(saveListSupplyVoltage.at(i)->saveStream) << (quint16)
                             (supplyVoltage[saveListSupplyVoltage.at(i)->boardStream][block] / 0.0000748);
                         ++numWordsWritten;
@@ -1598,21 +1620,21 @@ int SignalProcessor::loadSyntheticData(int numBlocks, double sampleRate,
 
                 // Save board ADC data
                 for (i = 0; i < saveListBoardAdc.size(); ++i) {
-                    for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                    for (t = 0; t < samplesPerDataBlock; ++t) {
                         *(saveListBoardAdc.at(i)->saveStream) << (quint16) 0;
                         ++numWordsWritten;
                     }
                 }
                 // Save board digital input data
                 for (i = 0; i < saveListBoardDigitalIn.size(); ++i) {
-                    for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                    for (t = 0; t < samplesPerDataBlock; ++t) {
                         *(saveListBoardDigitalIn.at(i)->saveStream) << (quint16) 0;
                         ++numWordsWritten;
                     }
                 }
                 // Save board digital output data
                 for (i = 0; i < 16; ++i) {
-                    for (t = 0; t < SAMPLES_PER_DATA_BLOCK; ++t) {
+                    for (t = 0; t < samplesPerDataBlock; ++t) {
                         *(saveListBoardDigitalOut.at(i)->saveStream) << (quint16) 0;
                         ++numWordsWritten;
                     }
@@ -1630,31 +1652,31 @@ int SignalProcessor::loadSyntheticData(int numBlocks, double sampleRate,
 int SignalProcessor::bytesPerBlock(SaveFormat saveFormat, bool saveTemperature, bool saveTtlOut)
 {
     int bytes = 0;
-    bytes += 4 * SAMPLES_PER_DATA_BLOCK;  // timestamps
-    bytes += 2 * SAMPLES_PER_DATA_BLOCK * saveListAmplifier.size();
+    bytes += 4 * samplesPerDataBlock;  // timestamps
+    bytes += 2 * samplesPerDataBlock * saveListAmplifier.size();
     if (saveFormat == SaveFormatIntan) {
-        bytes += 2 * (SAMPLES_PER_DATA_BLOCK / 4) * saveListAuxInput.size();
-        bytes += 2 * (SAMPLES_PER_DATA_BLOCK / 60) * saveListSupplyVoltage.size();
+        bytes += 2 * (samplesPerDataBlock / 4) * saveListAuxInput.size();
+        bytes += 2 * (samplesPerDataBlock / 60) * saveListSupplyVoltage.size();
         if (saveTemperature) {
-            bytes += 2 * (SAMPLES_PER_DATA_BLOCK / 60) * saveListSupplyVoltage.size();
+            bytes += 2 * (samplesPerDataBlock / 60) * saveListSupplyVoltage.size();
         }
     } else {
-        bytes += 2 * SAMPLES_PER_DATA_BLOCK * saveListAuxInput.size();
-        bytes += 2 * SAMPLES_PER_DATA_BLOCK * saveListSupplyVoltage.size();
+        bytes += 2 * samplesPerDataBlock * saveListAuxInput.size();
+        bytes += 2 * samplesPerDataBlock * saveListSupplyVoltage.size();
     }
-    bytes += 2 * SAMPLES_PER_DATA_BLOCK * saveListBoardAdc.size();
+    bytes += 2 * samplesPerDataBlock * saveListBoardAdc.size();
     if (saveFormat == SaveFormatIntan || saveFormat == SaveFormatFilePerSignalType) {
         if (saveListBoardDigIn) {
-            bytes += 2 * SAMPLES_PER_DATA_BLOCK;
+            bytes += 2 * samplesPerDataBlock;
         }
     } else {
-        bytes += 2 * SAMPLES_PER_DATA_BLOCK * saveListBoardDigitalIn.size();
+        bytes += 2 * samplesPerDataBlock * saveListBoardDigitalIn.size();
     }
     if (saveTtlOut) {
         if (saveFormat == SaveFormatIntan || saveFormat == SaveFormatFilePerSignalType) {
-            bytes += 2 * SAMPLES_PER_DATA_BLOCK;
+            bytes += 2 * samplesPerDataBlock;
         } else {
-            bytes += 2 * SAMPLES_PER_DATA_BLOCK * 16;
+            bytes += 2 * samplesPerDataBlock * 16;
         }
     }
     return bytes;
@@ -1705,7 +1727,7 @@ void SignalProcessor::filterData(int numBlocks,
                                  const QVector<QVector<bool> > &channelVisible)
 {
     int t, channel, stream;
-    int length = SAMPLES_PER_DATA_BLOCK * numBlocks;
+    int length = samplesPerDataBlock * numBlocks;
 
     // Note: Throughout this function, and elsewhere in this source code, we access
     // multidimensional 'QVector' containers using the at() function, so instead of
@@ -1809,7 +1831,7 @@ void SignalProcessor::measureComplexAmplitude(QVector<QVector<QVector<double> > 
     int endIndex = startIndex + numPeriods * period - 1;
 
     // Move the measurement window to the end of the waveform to ignore start-up transient.
-    while (endIndex < SAMPLES_PER_DATA_BLOCK * numBlocks - period) {
+    while (endIndex < samplesPerDataBlock * numBlocks - period) {
         startIndex += period;
         endIndex += period;
     }
@@ -1921,3 +1943,7 @@ void SignalProcessor::tempHistoryCalcAvg()
     }
 }
 
+bool SignalProcessor::isUSB3() 
+{
+    return usb3;
+}

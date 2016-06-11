@@ -75,6 +75,7 @@ public:
 
     int getEvalBoardMode();
     bool isRecording();
+    int getSamplesPerDataBlock();
 
 protected:
     void closeEvent(QCloseEvent *event);
@@ -148,6 +149,7 @@ private:
     void createLayout();
 
     void openInterfaceBoard();
+    void initInterfaceBoard();  // Added..split openInterfaceBoard() configurations
     void findConnectedAmplifiers();
     int deviceId(Rhd2000DataBlock *dataBlock, int stream, int &register59Value);
 
@@ -364,6 +366,8 @@ private:
     QLabel *actualImpedanceFreqLabel;
     QLabel *dacGainLabel;
     QLabel *dacNoiseSuppressLabel;
+
+    bool usb3;  // convenient placeholder for board type
 };
 
 #endif // MAINWINDOW_H

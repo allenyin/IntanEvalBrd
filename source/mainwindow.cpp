@@ -119,7 +119,11 @@ MainWindow::MainWindow()
         channelVisible[i].fill(false);
     }
 
-    signalProcessor = new SignalProcessor();
+    openInterfaceBoard();
+    usb3 = (evalBoard == 0) ? false : evalBoard->isUSB3();
+
+    // signalProcessor init
+    signalProcessor = new SignalProcessor(usb3);
     notchFilterFrequency = 60.0;
     notchFilterBandwidth = 10.0;
     notchFilterEnabled = false;
@@ -128,19 +132,21 @@ MainWindow::MainWindow()
     highpassFilterEnabled = false;
     signalProcessor->setHighpassFilterEnabled(highpassFilterEnabled);
 
+    // Client state  parameters
     running = false;
     recording = false;
     triggerSet = false;
     triggered = false;
 
+    // Save parameters
     saveTemp = false;
     saveTtlOut = false;
     validFilename = false;
     synthMode = false;
     fastSettleEnabled = false;
-
-    wavePlot = new WavePlot(signalProcessor, signalSources, this, this);
-
+    
+    // Plotting init
+    wavePlot = new WavePlot(signalProcessor, signalSources, this, usb3, this);
     connect(wavePlot, SIGNAL(selectedChannelChanged(SignalChannel*)),
             this, SLOT(newSelectedChannel(SignalChannel*)));
 
@@ -158,7 +164,7 @@ MainWindow::MainWindow()
     manualDelay.resize(4);
     manualDelay.fill(0);
 
-    openInterfaceBoard();
+    initInterfaceBoard();   
 
     changeSampleRate(sampleRateComboBox->currentIndex());
     sampleRateComboBox->setCurrentIndex(14);
@@ -1747,7 +1753,7 @@ void MainWindow::changeSampleRate(int sampleRateIndex)
 // Attempt to open a USB interface board connected to a USB port.
 void MainWindow::openInterfaceBoard()
 {
-    evalBoard = new Rhd2000EvalBoard;
+    evalBoard = new Rhd2000EvalBoard(BTPIPE_BLOCK_SIZE_USB3); // param doesn't matter if not USB3
 
     // Open Opal Kelly XEM6010 board or XEM6310 board.
     int errorCode = evalBoard->open();
@@ -1811,6 +1817,10 @@ void MainWindow::openInterfaceBoard()
 
     // Read 4-bit board mode.
     evalBoardMode = evalBoard->getBoardMode();
+}
+
+void MainWindow::initInterfaceBoard() 
+{
 
     // Set sample rate and upload all auxiliary SPI command sequences.
     changeSampleRate(sampleRateComboBox->currentIndex());
@@ -1821,23 +1831,26 @@ void MainWindow::openInterfaceBoard()
     evalBoard->selectAuxCommandBank(Rhd2000EvalBoard::PortC, Rhd2000EvalBoard::AuxCmd3, 0);
     evalBoard->selectAuxCommandBank(Rhd2000EvalBoard::PortD, Rhd2000EvalBoard::AuxCmd3, 0);
 
+
     // Since our longest command sequence is 60 commands, we run the SPI
-    // interface for 60 samples.
+    // interface for 60 samples, if it's USB2.
+    //
+    // Otherwise, run 64 samples, if it's USB3.
 /*
-    evalBoard->setMaxTimeStep(60);
+    evalBoard->setMaxTimeStep(Rhd2000DataBlock::getSamplesPerDataBlock(usb3));
     evalBoard->setContinuousRunMode(false);
 
     // Start SPI interface.
     evalBoard->run();
 
-    // Wait for the 60-sample run to complete.
+    // Wait for the 60-sample or 64-sample run to complete.
     while (evalBoard->isRunning()) {
         qApp->processEvents();
     }
 
     // Read the resulting single data block from the USB interface.
     cout << "Openning interface board, numEnabledDataStreams=" << evalBoard->getNumEnabledDataStreams() << endl;
-    Rhd2000DataBlock *dataBlock = new Rhd2000DataBlock(evalBoard->getNumEnabledDataStreams());
+    Rhd2000DataBlock *dataBlock = new Rhd2000DataBlock(evalBoard->getNumEnabledDataStreams(), usb3);
     evalBoard->readDataBlock(dataBlock);
     cout << "Finished openning interface board 1" << endl;
     
@@ -1846,17 +1859,25 @@ void MainWindow::openInterfaceBoard()
     delete dataBlock;
 */
 
-    //---------------------------------------------------------------
-    // TEST: Run 30 samples at a time with 1 datastream enabled, see how many valid datablocks
-    // with valid header we can get. Each iteration would mean 30 valid datablocks
+//---------------------------------------------------------------
+// TEST: Run 64 samples at a time with 1 datastream enabled, see how many valid datablocks
+// with valid header we can get. Each iteration would mean 30 valid datablocks
+
     evalBoard->enableDataStream(1, true);  // 2 streams?
-    Rhd2000DataBlock *dataBlock = new Rhd2000DataBlock(evalBoard->getNumEnabledDataStreams());
+    evalBoard->enableDataStream(2, true);  // 3 streams?
+    evalBoard->enableDataStream(3, true);  // 4 streams?
+    evalBoard->enableDataStream(4, true);  // 5 streams?
+    evalBoard->enableDataStream(5, true);  // 6 streams?
+    evalBoard->enableDataStream(6, true);  // 7 streams?
+    //evalBoard->enableDataStream(7, true);  // 8 streams?
+
+    Rhd2000DataBlock *dataBlock = new Rhd2000DataBlock(evalBoard->getNumEnabledDataStreams(), usb3);
     int jj = 1;
     bool validBlocks = true;
-    cout << "----TEST validBlocks---" << endl;
+    cout << "----TEST validBlocks with" << evalBoard->getNumEnabledDataStreams() << " datastreams---"<< endl;
     while (validBlocks) {
         cout << "\nTEST validBlocks " << jj << ": " << endl;
-        evalBoard->setMaxTimeStep(SAMPLES_PER_DATA_BLOCK);
+        evalBoard->setMaxTimeStep(Rhd2000DataBlock::getSamplesPerDataBlock(usb3));
         evalBoard->setContinuousRunMode(false);
 
         // Start SPI interface.
@@ -1875,9 +1896,39 @@ void MainWindow::openInterfaceBoard()
     cout << "---TEST validBlocks finished---" << endl << endl;
 //-----------------------------------------------------------
 
-    
+/*
+    // Reduced initializatin sequence - Default commandList length is 60.
+    // With 1 datastream running, this will result in corrupted data, so 
+    // run with timestep=30 twice instead.
+    // Datablock has enough space for 60 samples
+    Rhd2000DataBlock *dataBlock = new Rhd2000DataBlock(evalBoard->getNumEnabledDataStreams());
+    // But we will only use half of that
+    evalBoard->setMaxTimeStep(30);
+    evalBoard->setContinuousRunMode(false);
+    // first 30 run
+    evalBoard->selectAuxCommandLength(Rhd2000EvalBoard::AuxCmd3, 0, 29);
+    evalBoard->run();
+    while (evalBoard->isRunning()) {
+        qApp->processEvents();
+    }
+    if (! evalBoard->readDataBlock(dataBlock, 30)) {
+        cerr << "Error in ADC calibration sequence first half." << endl;
+    }
+    // second half of command list
+    evalBoard->selectAuxCommandLength(Rhd2000EvalBoard::AuxCmd3, 30, 59);
+    evalBoard->run();
+    while (evalBoard->isRunning()) {
+        qApp->processEvents();
+    }
+    if (evalBoard->readDataBlock(dataBlock, 30)) {
+        cout << "ADC calibration sequence second half success." << endl;
+    }
+    delete dataBlock;
+    // reset auxCommandList
+    evalBoard->selectAuxCommandLength(Rhd2000EvalBoard::AuxCmd3, 0, 59);
+*/
 
-
+//----------------------------------------------------------------------
 
     // Now that ADC calibration has been performed, we switch to the command sequence
     // that does not execute ADC calibration.
@@ -1999,7 +2050,7 @@ void MainWindow::findConnectedAmplifiers()
         evalBoard->enableDataStream(6, true);
         evalBoard->enableDataStream(7, true);
 
-        cout << "Finding connected amplifiers: number of enabled data streams=" << evalBoard->getNumEnabledDataStreams() << endl;
+        cout << "\nFinding connected amplifiers: number of enabled data streams=" << evalBoard->getNumEnabledDataStreams() << endl;
 
         evalBoard->selectAuxCommandBank(Rhd2000EvalBoard::PortA,
                                         Rhd2000EvalBoard::AuxCmd3, 0);
@@ -2011,12 +2062,12 @@ void MainWindow::findConnectedAmplifiers()
                                         Rhd2000EvalBoard::AuxCmd3, 0);
 
         // Since our longest command sequence is 60 commands, we run the SPI
-        // interface for 60 samples.
-        evalBoard->setMaxTimeStep(60);
+        // interface for 60 (USB2) or 64 (USB3)
+        evalBoard->setMaxTimeStep(Rhd2000DataBlock::getSamplesPerDataBlock(usb3));
         evalBoard->setContinuousRunMode(false);
 
         Rhd2000DataBlock *dataBlock =
-                new Rhd2000DataBlock(evalBoard->getNumEnabledDataStreams());
+                new Rhd2000DataBlock(evalBoard->getNumEnabledDataStreams(), usb3);
         QVector<int> sumGoodDelays(MAX_NUM_DATA_STREAMS, 0);
         QVector<int> indexFirstGoodDelay(MAX_NUM_DATA_STREAMS, -1);
         QVector<int> indexSecondGoodDelay(MAX_NUM_DATA_STREAMS, -1);
@@ -2033,13 +2084,13 @@ void MainWindow::findConnectedAmplifiers()
             // Start SPI interface.
             evalBoard->run();
 
-            // Wait for the 60-sample run to complete.
+            // Wait for the run to complete.
             while (evalBoard->isRunning()) {
                 qApp->processEvents();
             }
 
             // Read the resulting single data block from the USB interface.
-            cout << "In findConnectedAmplifiers()" << endl;
+            printf("In findConnectedAmplifiers(), delay=%d\n", delay);
             evalBoard->readDataBlock(dataBlock);
             cout << "Finished findConnectedAmplifiers() readDataBlock" << endl;
 
@@ -2062,6 +2113,7 @@ void MainWindow::findConnectedAmplifiers()
                 }
             }
         }
+        cout << "End delay scanning" << endl;
 
         // Set cable delay settings that yield good communication with each
         // RHD2000 chip.
@@ -2548,12 +2600,13 @@ void MainWindow::runInterfaceBoard()
     static int triggerEndCounter = 0;
     int triggerEndThreshold;
 
-    triggerEndThreshold = qCeil(postTriggerTime * boardSampleRate / (numUsbBlocksToRead * SAMPLES_PER_DATA_BLOCK)) - 1;
+    triggerEndThreshold = qCeil(postTriggerTime * boardSampleRate / (numUsbBlocksToRead * Rhd2000DataBlock::getSamplesPerDataBlock(usb3))) - 1;
 
     if (triggerSet) {
         preTriggerBufferQueueLength = numUsbBlocksToRead *
                 (qCeil(recordTriggerBuffer /
-                      (numUsbBlocksToRead * Rhd2000DataBlock::getSamplesPerDataBlock() / boardSampleRate)) + 1);
+                      (numUsbBlocksToRead * Rhd2000DataBlock::getSamplesPerDataBlock(usb3)
+                       / boardSampleRate)) + 1);
     }
 
     QSound triggerBeep(QDir::tempPath() + "/triggerbeep.wav");
@@ -2593,26 +2646,26 @@ void MainWindow::runInterfaceBoard()
     }
 
     unsigned int dataBlockSize;
-
+    Rhd2000DataBlock *dataBlock = new Rhd2000DataBlock(evalBoard->getNumEnabledDataStreams(), usb3);
     if (synthMode) {
-        dataBlockSize = Rhd2000DataBlock::calculateDataBlockSizeInWords(1);
+        // 1 stream
+        dataBlockSize = Rhd2000DataBlock::calculateDataBlockSizeInWords(1, usb3);
     } else {
-        dataBlockSize = Rhd2000DataBlock::calculateDataBlockSizeInWords(
-                    evalBoard->getNumEnabledDataStreams());
+        dataBlockSize = dataBlock->calculateDataBlockSizeInWords(evalBoard->getNumEnabledDataStreams(), usb3);
     }
 
     unsigned int wordsInFifo;
     double fifoPercentageFull, fifoCapacity, samplePeriod, latency;
     long long totalBytesWritten = 0;
     double totalRecordTimeSeconds = 0.0;
-    double recordTimeIncrementSeconds = numUsbBlocksToRead *
-            Rhd2000DataBlock::getSamplesPerDataBlock() / boardSampleRate;
+    double recordTimeIncrementSeconds = numUsbBlocksToRead * 
+                   Rhd2000DataBlock::getSamplesPerDataBlock(usb3) / boardSampleRate;
 
     // Calculate the number of bytes per minute that we will be saving to disk
     // if recording data (excluding headers).
-    double bytesPerMinute = Rhd2000DataBlock::getSamplesPerDataBlock() *
+    double bytesPerMinute = Rhd2000DataBlock::getSamplesPerDataBlock(usb3) *
             ((double) signalProcessor->bytesPerBlock(saveFormat, saveTemp, saveTtlOut) /
-             (double) Rhd2000DataBlock::getSamplesPerDataBlock()) * boardSampleRate;
+             (double) Rhd2000DataBlock::getSamplesPerDataBlock(usb3)) * boardSampleRate;
 
     samplePeriod = 1.0 / boardSampleRate;
     fifoCapacity = Rhd2000EvalBoard::fifoCapacityInWords();
@@ -2658,7 +2711,7 @@ void MainWindow::runInterfaceBoard()
             } else {
                 // Check the number of words stored in the Opal Kelly USB interface FIFO.
                 wordsInFifo = evalBoard->numWordsInFifo();
-                latency = 1000.0 * Rhd2000DataBlock::getSamplesPerDataBlock() *
+                latency = 1000.0 * Rhd2000DataBlock::getSamplesPerDataBlock(usb3) *
                         (wordsInFifo / dataBlockSize) * samplePeriod;
 
                 fifoPercentageFull = 100.0 * wordsInFifo / fifoCapacity;
@@ -2708,7 +2761,7 @@ void MainWindow::runInterfaceBoard()
 
                     setStatusBarRecording(bytesPerMinute);
 
-                    totalRecordTimeSeconds = bufferQueue.size() * Rhd2000DataBlock::getSamplesPerDataBlock() / boardSampleRate;
+                    totalRecordTimeSeconds = bufferQueue.size() * Rhd2000DataBlock::getSamplesPerDataBlock(usb3) / boardSampleRate;
 
                     // Write contents of pre-trigger buffer to file.
                     totalBytesWritten += signalProcessor->saveBufferedData(bufferQueue, *saveStream, saveFormat,
@@ -3556,7 +3609,7 @@ void MainWindow::runImpedanceMeasurement()
     evalBoard->selectAuxCommandBank(Rhd2000EvalBoard::PortD, Rhd2000EvalBoard::AuxCmd3, 3);
 
     evalBoard->setContinuousRunMode(false);
-    evalBoard->setMaxTimeStep(SAMPLES_PER_DATA_BLOCK * numBlocks);
+    evalBoard->setMaxTimeStep(SAMPLES_PER_DATA_BLOCK(usb3) * numBlocks);
 
     // Create matrices of doubles of size (numStreams x 32 x 3) to store complex amplitudes
     // of all amplifier channels (32 on each data stream) at three different Cseries values.

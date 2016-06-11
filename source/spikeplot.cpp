@@ -238,17 +238,17 @@ void SpikePlot::updateWaveform(int numBlocks)
     // Load recent waveform data and digital input data into our buffers.  Also, calculate
     // waveform RMS value.
     rms = 0.0;
-    for (i = 0; i < SAMPLES_PER_DATA_BLOCK * numBlocks; ++i) {
+    for (i = 0; i < SAMPLES_PER_DATA_BLOCK(signalProcessor->isUSB3()) * numBlocks; ++i) {
         spikeWaveformBuffer[i + totalTSteps - 1] = signalProcessor->amplifierPostFilter.at(stream).at(channel).at(i);
         rms += (signalProcessor->amplifierPostFilter.at(stream).at(channel).at(i) *
                 signalProcessor->amplifierPostFilter.at(stream).at(channel).at(i));
         digitalInputBuffer[i + totalTSteps - 1] =  signalProcessor->boardDigIn.at(digitalTriggerChannel).at(i);
     }
-    rms = qSqrt(rms / (SAMPLES_PER_DATA_BLOCK * numBlocks));
+    rms = qSqrt(rms / (SAMPLES_PER_DATA_BLOCK(signalProcessor->isUSB3()) * numBlocks));
 
     // Find trigger events, and then copy waveform snippets to spikeWaveform vector.
     index = startingNewChannel ? (preTriggerTSteps + totalTSteps) : preTriggerTSteps;
-    while (index <= SAMPLES_PER_DATA_BLOCK * numBlocks + totalTSteps - 1 - (totalTSteps - preTriggerTSteps)) {
+    while (index <= SAMPLES_PER_DATA_BLOCK(signalProcessor->isUSB3()) * numBlocks + totalTSteps - 1 - (totalTSteps - preTriggerTSteps)) {
         triggered = false;
         if (voltageTriggerMode) {
             if (voltageThreshold >= 0) {
@@ -301,8 +301,8 @@ void SpikePlot::updateWaveform(int numBlocks)
     // Copy tail end of waveform to beginning of spike waveform buffer, in case there is a spike
     // at the seam between two data blocks.
     index = 0;
-    for (i = SAMPLES_PER_DATA_BLOCK * numBlocks - totalTSteps + 1;
-         i < SAMPLES_PER_DATA_BLOCK * numBlocks; ++i) {
+    for (i = SAMPLES_PER_DATA_BLOCK(signalProcessor->isUSB3()) * numBlocks - totalTSteps + 1;
+         i < SAMPLES_PER_DATA_BLOCK(signalProcessor->isUSB3()) * numBlocks; ++i) {
         spikeWaveformBuffer[index++] = signalProcessor->amplifierPostFilter.at(stream).at(channel).at(i);
     }
 

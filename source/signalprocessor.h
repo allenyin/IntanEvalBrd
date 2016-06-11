@@ -36,7 +36,10 @@ class RandomNumber;
 class SignalProcessor
 {
 public:
-    SignalProcessor();
+    SignalProcessor(bool isusb3);
+    ~SignalProcessor();
+    // Note: no copy-constructor or assignment operator defined
+    //       So don't go around copying/moving/assigning this now!
 
     void allocateMemory(int numStreams);
     void setNotchFilter(double notchFreq, double bandwidth, double sampleFreq);
@@ -79,6 +82,9 @@ public:
     QVector<QVector<double> > boardAdc;
     QVector<QVector<int> > boardDigIn;
     QVector<QVector<int> > boardDigOut;
+
+    // added for nonfixed samples per data block
+    bool isUSB3();
 
 private:
     QVector<QVector<QVector<double> > > prevAmplifierPreFilter;
@@ -164,9 +170,17 @@ private:
 
     // To speed up writing to disk, we must create a char array which we fill with bytes of raw data
     // and use QDataStream::writeRawData(const char *s, int len) to stream out more efficiently.
-    char dataStreamBuffer[2 * MAX_NUM_DATA_STREAMS * 32 * SAMPLES_PER_DATA_BLOCK];
-    char dataStreamBufferArray[MAX_NUM_DATA_STREAMS * 32][2 * SAMPLES_PER_DATA_BLOCK * 16]; // Assume maximum number of data blocks = 16
+    //char dataStreamBuffer[2 * MAX_NUM_DATA_STREAMS * 32 * SAMPLES_PER_DATA_BLOCK];
+    //char dataStreamBufferArray[MAX_NUM_DATA_STREAMS * 32][2 * SAMPLES_PER_DATA_BLOCK * 16]; // Assume maximum number of data blocks = 16
     int bufferArrayIndex[MAX_NUM_DATA_STREAMS * 32];
+    
+    // Modification to accomodate USB3 having different SAMPLES_PER_DATA_BLOCK, we don't know size
+    // until runtime. Creation of arrays are now moved into the constructor
+    char *dataStreamBuffer;
+    char **dataStreamBufferArray;
+
+    int samplesPerDataBlock; // this is now taken from constructor
+    bool usb3;
 };
 
 #endif // SIGNALPROCESSOR_H

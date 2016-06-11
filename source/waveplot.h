@@ -39,7 +39,7 @@ class WavePlot : public QWidget
 
 public:
     WavePlot(SignalProcessor *inSignalProcessor, SignalSources *inSignalSources,
-             MainWindow *inMainWindow, QWidget *parent = 0);
+             MainWindow *inMainWindow, bool isusb3, QWidget *parent = 0);
 
     void initialize(int startingPort);
     void passFilteredData();
@@ -140,6 +140,8 @@ private:
 
     void createFrames(unsigned int frameIndex, unsigned int maxX, unsigned int maxY);
     void createAllFrames();
+    
+    bool usb3;
 };
 
 #endif // WAVEPLOT_H
