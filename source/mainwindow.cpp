@@ -1835,8 +1835,8 @@ void MainWindow::initInterfaceBoard()
     // Since our longest command sequence is 60 commands, we run the SPI
     // interface for 60 samples, if it's USB2.
     //
-    // Otherwise, run 64 samples, if it's USB3.
-/*
+    // Otherwise, run 64 samples, if it's USB3
+
     evalBoard->setMaxTimeStep(Rhd2000DataBlock::getSamplesPerDataBlock(usb3));
     evalBoard->setContinuousRunMode(false);
 
@@ -1853,22 +1853,23 @@ void MainWindow::initInterfaceBoard()
     Rhd2000DataBlock *dataBlock = new Rhd2000DataBlock(evalBoard->getNumEnabledDataStreams(), usb3);
     evalBoard->readDataBlock(dataBlock);
     cout << "Finished openning interface board 1" << endl;
+    evalBoard->flush();
     
     // We don't need to do anything with this data block; it was used to configure
     // the RHD2000 amplifier chips and to run ADC calibration.
     delete dataBlock;
-*/
-
+ 
 //---------------------------------------------------------------
 // TEST: Run 64 samples at a time with 1 datastream enabled, see how many valid datablocks
 // with valid header we can get. Each iteration would mean 30 valid datablocks
 
+/* 
     evalBoard->enableDataStream(1, true);  // 2 streams?
     evalBoard->enableDataStream(2, true);  // 3 streams?
-    evalBoard->enableDataStream(3, true);  // 4 streams?
-    evalBoard->enableDataStream(4, true);  // 5 streams?
-    evalBoard->enableDataStream(5, true);  // 6 streams?
-    evalBoard->enableDataStream(6, true);  // 7 streams?
+    //evalBoard->enableDataStream(3, true);  // 4 streams?
+    //evalBoard->enableDataStream(4, true);  // 5 streams?
+    //evalBoard->enableDataStream(5, true);  // 6 streams?
+    //evalBoard->enableDataStream(6, true);  // 7 streams?
     //evalBoard->enableDataStream(7, true);  // 8 streams?
 
     Rhd2000DataBlock *dataBlock = new Rhd2000DataBlock(evalBoard->getNumEnabledDataStreams(), usb3);
@@ -1894,6 +1895,7 @@ void MainWindow::initInterfaceBoard()
     }
     delete dataBlock;
     cout << "---TEST validBlocks finished---" << endl << endl;
+*/  
 //-----------------------------------------------------------
 
 /*
@@ -2090,9 +2092,10 @@ void MainWindow::findConnectedAmplifiers()
             }
 
             // Read the resulting single data block from the USB interface.
-            printf("In findConnectedAmplifiers(), delay=%d\n", delay);
+            cout << "In findConnectedAmplifiers(), delay=" << delay << endl;
             evalBoard->readDataBlock(dataBlock);
             cout << "Finished findConnectedAmplifiers() readDataBlock" << endl;
+            evalBoard->flush();
 
             // Read the Intan chip ID number from each RHD2000 chip found.
             // Record delay settings that yield good communication with the chip.
@@ -2599,7 +2602,7 @@ void MainWindow::runInterfaceBoard()
     static int fifoNearlyFull = 0;
     static int triggerEndCounter = 0;
     int triggerEndThreshold;
-
+    
     triggerEndThreshold = qCeil(postTriggerTime * boardSampleRate / (numUsbBlocksToRead * Rhd2000DataBlock::getSamplesPerDataBlock(usb3))) - 1;
 
     if (triggerSet) {
@@ -2685,6 +2688,10 @@ void MainWindow::runInterfaceBoard()
         timer.start();
     }
 
+    evalBoard->resetTimer();
+    evalBoard->resetGlitchCount();
+
+    //int readDataBlocksCounter = 0;
     while (running) {
         // If we are running in demo mode, use a timer to periodically generate more synthetic
         // data.  If not, wait for a certain amount of data to be ready from the USB interface board.
@@ -2693,7 +2700,9 @@ void MainWindow::runInterfaceBoard()
                             ((int) (1000.0 * 60.0 * (double) numUsbBlocksToRead / boardSampleRate)));
         } else {
             newDataReady = evalBoard->readDataBlocks(numUsbBlocksToRead, dataQueue);    // takes about 17 ms at 30 kS/s with 256 amplifiers
+            //readDataBlocksCounter++;
         }
+        //cout << "readDataBlocksCounter=" << readDataBlocksCounter << endl;
 
         // If new data is ready, then read it.
         if (newDataReady) {
@@ -2953,6 +2962,7 @@ void MainWindow::runInterfaceBoard()
 // Stop SPI data acquisition.
 void MainWindow::stopInterfaceBoard()
 {
+    cout << "Stop button pressed!" << endl;
     running = false;
     wavePlot->setFocus();
 }

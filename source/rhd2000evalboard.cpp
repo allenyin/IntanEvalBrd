@@ -49,6 +49,8 @@ Rhd2000EvalBoard::Rhd2000EvalBoard(int blockSize)
     }
 
     cableDelay.resize(4, -1);
+    glitchCounter = 0;
+    startTime = clock();
 }
 
 // Find an Opal Kelly XEM6010-LX45 or XEM6310-LX150 board attached to a USB port and open it.
@@ -666,12 +668,16 @@ void Rhd2000EvalBoard::resetBoard()
 // maxTimeStep is reached (if continuousMode == false).
 void Rhd2000EvalBoard::setContinuousRunMode(bool continuousMode)
 {
+    long res;
     if (continuousMode) {
-        dev->SetWireInValue(WireInResetRun, 0x02, 0x02);
+        printf("Setting continousMode true\n");
+        res = dev->SetWireInValue(WireInResetRun, 0x02, 0x02);
     } else {
-        dev->SetWireInValue(WireInResetRun, 0x00, 0x02);
+        printf("Setting continuousMode false\n");
+        res = dev->SetWireInValue(WireInResetRun, 0x00, 0x02);
     }
     dev->UpdateWireIns();
+    cout << "setContinousRunMode: res=" << res << endl;
 }
 
 // Set maxTimeStep for cases where continuousMode == false.
@@ -1313,12 +1319,67 @@ bool Rhd2000EvalBoard::isDataClockLocked() const
 // data acquisition has been stopped.)
 void Rhd2000EvalBoard::flush()
 {
+    cout << "Flushing FIFO contents: " << numWordsInFifo() << " 16-bits words" << endl;
+    long errorCode;
+    unsigned int bytesToFlush;
     while (numWordsInFifo() >= USB_BUFFER_SIZE / 2) {
-        dev->ReadFromPipeOut(PipeOutData, USB_BUFFER_SIZE, usbBuffer);
+        if (usb3) {
+            errorCode = dev->ReadFromBlockPipeOut(PipeOutData, BTblockSize, USB_BUFFER_SIZE, usbBuffer); 
+        } else {
+            errorCode = dev->ReadFromPipeOut(PipeOutData, USB_BUFFER_SIZE, usbBuffer);
+        }
+        if (!printFailedErrorCode(errorCode)) {
+            printf("Flushed %d words\n", USB_BUFFER_SIZE/2);
+        }
     }
+
+    if (numWordsInFifo() > 0) {
+        // clean up smaller number of words
+        if (usb3) {
+            // TODO: Change burst-length while flushing
+            dev->SetWireInValue(WireInResetRun, 1<<4, 1<<4); // Override pipeout block throttle
+            dev->UpdateWireIns();
+            while (numWordsInFifo() > 0) {
+                bytesToFlush = 2*numWordsInFifo();
+                errorCode = dev->ReadFromBlockPipeOut(PipeOutData, BTblockSize, 
+                                              BTblockSize * max(bytesToFlush/BTblockSize, (unsigned int)1),
+                                              usbBuffer);
+                if (!printFailedErrorCode(errorCode)) {
+                    printf("Flushed %d bytes\n", bytesToFlush);
+                }
+            }
+            dev->SetWireInValue(WireInResetRun, 0, 1<<4);   // Disable pipeout block throttle override.
+            dev->UpdateWireIns();
+        }
+        else {
+            while (numWordsInFifo() > 0) {
+                bytesToFlush = 2*numWordsInFifo();
+                errorCode = dev->ReadFromPipeOut(PipeOutData, bytesToFlush, usbBuffer);
+                if (!printFailedErrorCode(errorCode)) {
+                    printf("Flushed %d bytes\n", bytesToFlush);
+                }
+            }
+        }
+    }
+    /*
     while (numWordsInFifo() > 0) {
-        dev->ReadFromPipeOut(PipeOutData, 2 * numWordsInFifo(), usbBuffer);
+        bytesToFlush = 2*numWordsInFifo();
+        if (usb3) {
+            bytesToFlush = (2*numWordsInFifo() % BTblockSize == 0) ? (2*numWordsInFifo()) : (2*numWordsInFifo()/BTblockSize*BTblockSize);
+            if (bytesToFlush == 0) {
+                printf("USB3: Bytes in left FIFO less than BTblockSize, resetting FIFO...\n");
+                return;
+            } else {
+                errorCode = dev->ReadFromBlockPipeOut(PipeOutData, BTblockSize, bytesToFlush, usbBuffer);
+            }
+        } else {
+            errorCode = dev->ReadFromPipeOut(PipeOutData, bytesToFlush, usbBuffer);
+        }
+        if (!printFailedErrorCode(errorCode)) {
+            printf("Flushed %d bytes\n", bytesToFlush);
+        }
     }
+    */
 }
 
 // Read data block from the USB interface, if one is available.  Returns true if data block
@@ -1344,19 +1405,9 @@ bool Rhd2000EvalBoard::readDataBlock(Rhd2000DataBlock *dataBlock, int nSamples)
         res = dev->ReadFromPipeOut(PipeOutData, numBytesToRead, usbBuffer);
     }
 
-    switch(res) {
-        case okCFrontPanel::InvalidBlockSize:
-            cerr << "CRITICAL: InvalidBlockSize" << endl;
-            break;
-        case okCFrontPanel::Failed:
-            cerr << "CRITICAL: PipeRead failed" << endl;
-            break;
-        case okCFrontPanel::Timeout:
-            cerr << "CRITICAL: PipeRead timeouted" << endl;
-            break;
-        default:
-            break;
-    }
+    printFailedErrorCode(res);
+
+    
 
     return dataBlock->fillFromUsbBuffer(usbBuffer, 0, numDataStreams, nSamples);
 
@@ -1368,6 +1419,7 @@ bool Rhd2000EvalBoard::readDataBlock(Rhd2000DataBlock *dataBlock, int nSamples)
 // 
 bool Rhd2000EvalBoard::readDataBlocks(int numBlocks, queue<Rhd2000DataBlock> &dataQueue)
 {
+    //printf("readDataBlocks()\n");
     unsigned int numWordsToRead, numBytesToRead;
     int i;
     long res;
@@ -1422,54 +1474,71 @@ bool Rhd2000EvalBoard::readDataBlocks(int numBlocks, queue<Rhd2000DataBlock> &da
     }
     */
 
-    // Look for proper 'magic number' header in all data blocks to check for USB glitches
+//--------------------------------------------------------------------------------------------
+    /* Intan's glitch handling - reads additional corupted bytes to fill in the holes.
+       Look for proper 'magic number' header in all data blocks to check for USB glitches
+     
+       Allen's glitch handling - in USB3 sometimes we get lost bytes. This causes the 
+       next frame's data to be shifted. Ideally we would:
+       1) find the next valid block
+       2) discard the current block
+       3) fill the discard space with a copy of the next valid block, after
+          updating the timestamp values.
+
+       However, this procedure requires shifting the valid data forward (increasing address) inside 
+       the buffer, which requires extra memory. Since the additional number of samples we need to read
+       might not be divisble by BTBlocksize, we fill the holes left behind with copies of the last full
+       valid sample block.
+    */
     unsigned int samplesPerDataBlock = dataBlock->getSamplesPerDataBlock(usb3); 
     unsigned int dataBlockSizeInBytes = 2 * dataBlock->calculateDataBlockSizeInWords(numDataStreams, usb3);
     unsigned int sampleSizeInBytes = dataBlockSizeInBytes / samplesPerDataBlock; 
     int sample;
     int index = 0;
     int lag;
+    unsigned int elapsed = 0;
     for (sample = 0; sample < numBlocks * samplesPerDataBlock; ++sample) {
         if (!(dataBlock->checkUsbHeader(usbBuffer, index))) {
+            glitchCounter++;
+            elapsed = (clock() - startTime) / CLOCKS_PER_MS;
+            printf("%d USB glitches detected at %d, sample=%d\n", glitchCounter, elapsed, sample);
+
             if (sample > 0) {
                 // If we have a bad data sample header on any sample but the first, we shouldn't trust
                 // the integrity of the prior sample, since it is likely contains a "hole" where missing
                 // USB data should be.  Jump back one sample and try to fix that one.
                 sample--;
                 index -= sampleSizeInBytes;
-                // readAdditionalDataWords(1, index, numBytesToRead);
             }
 
             // Search for correct header throughout the sample.
             lag = sampleSizeInBytes / 2;
+            printf("Searching for correct header\n");
             for (i = 1; i < sampleSizeInBytes / 2; ++i) {
                 if (dataBlock->checkUsbHeader(usbBuffer, index + 2 * i)) {
                     lag = i;
+                    printf("Found correct header at byte number %d\n", lag);
                     break;
                 }
             }
-            // Realign data and read additional words from the USB to refill buffer.
-            if (!readAdditionalDataWords(lag, index, numBytesToRead)) {
-                // missing hole has size indivisible by blocksize
-                // clean up and return false, we discard this data.
-                // TODO: Better handling so we can salve this? Or mark it in data.
-                delete dataBlock;
-                return false;
-            }
+            // Realign data and read additional words from the USB to refill buffer if usb2
+            // Ignore bad block and back-fill in with copy of good block if usb3.
+            readAdditionalDataWords(lag, index, numBytesToRead, sampleSizeInBytes);
         }
         index += sampleSizeInBytes;
     }
+//----------------------------------------------------------------------------------------------
 
     // Re-check USB headers (for debugging purposes only)
-    /*
+    
     index = 0;
-    for (sample = 0; sample < numBlocks * SAMPLES_PER_DATA_BLOCK; ++sample) {
+    for (sample = 0; sample < numBlocks * samplesPerDataBlock; ++sample) {
         if (!(dataBlock->checkUsbHeader(usbBuffer, index))) {
             cerr << "Unfixed header error at sample " << sample << endl;
         }
         index += sampleSizeInBytes;
     }
-    */
+    
 
     // End of USB error checking added for version 1.5
 
@@ -1482,14 +1551,22 @@ bool Rhd2000EvalBoard::readDataBlocks(int numBlocks, queue<Rhd2000DataBlock> &da
     return true;
 }
 
-bool Rhd2000EvalBoard::readAdditionalDataWords(unsigned int numWords, unsigned int errorPoint, unsigned int bufferLength)
+bool Rhd2000EvalBoard::readAdditionalDataWords(unsigned int numWords, unsigned int errorPoint, unsigned int bufferLength, unsigned int sampleSizeInBytes)
 {
+    // numWords = number of words into the previous sample where a correct header starts
+    // errorPoint = start of the previous (corrupted sample)
+    // bufferLength = length of current data in usbBuffer
+    // sampleSizeInBytes = size of one sample frame in bytes
+
     unsigned int numBytes = 2 * numWords;
+    /*
     if (usb3 && (numBytes % BTblockSize != 0)) {
         cerr << "Error in Rhd2000EvalBoard::readAdditionalDataWords: bytes requested is not divisible by\
                  BTblockSize (" << BTblockSize << "bytes)!" << endl;
         return false;
     }
+    */
+
     // Shift all data beyond error point back by N words (2N bytes)...
     for (unsigned int i = errorPoint; i < bufferLength - numBytes; i += 2) {
         usbBuffer[i] = usbBuffer[i + numBytes];
@@ -1498,10 +1575,18 @@ bool Rhd2000EvalBoard::readAdditionalDataWords(unsigned int numWords, unsigned i
 
     while (numWordsInFifo() < numWords) { }    // ...wait for data word to become available...
 
-    // ...and read N more words (2N more bytes) from USB, and append it to the end.
     if (usb3) {
-        dev->ReadFromBlockPipeOut(PipeOutData, BTblockSize, numBytes, &usbBuffer[bufferLength - numBytes]);
+        // ...copy the last sample and append it to the back of the last complete sample. 
+        // We will see duplicate timestamps in this case.
+        unsigned int lastSampleStart = bufferLength - 2*sampleSizeInBytes;
+        unsigned int lastSampleEnd = bufferLength - sampleSizeInBytes - 1;
+        for (unsigned int i = 0; i < sampleSizeInBytes; i += 2) {
+            usbBuffer[lastSampleEnd+1+i] = usbBuffer[lastSampleStart+i];
+            usbBuffer[lastSampleEnd+1+i+1] = usbBuffer[lastSampleStart+i+1];
+        }
+        printf("Request additional %d bytes\n", numBytes);
     } else {
+        // ...and read N more words (2N more bytes) from USB, and append it to the end if usb2.
         dev->ReadFromPipeOut(PipeOutData, numBytes, &usbBuffer[bufferLength - numBytes]);
     }
     return true;
@@ -1632,3 +1717,47 @@ bool Rhd2000EvalBoard::isUSB3()
 {
     return usb3;
 }  
+
+void Rhd2000EvalBoard::resetTimer() {
+    startTime = clock();
+}
+
+unsigned int Rhd2000EvalBoard::getGlitchCount() {
+    return glitchCounter;
+}
+
+void Rhd2000EvalBoard::resetGlitchCount() {
+    glitchCounter = 0;
+}
+
+bool Rhd2000EvalBoard::printFailedErrorCode(long errorCode) {
+    // print if errorCode is bad
+    switch(errorCode) {
+        case okCFrontPanel::InvalidEndpoint:
+            cerr << "CRITICAL: InvalidEndPoint" << endl;
+            return true;
+        case okCFrontPanel::InvalidBlockSize:
+            cerr << "CRITICAL: InvalidBlockSize" << endl;
+            return true;
+        case okCFrontPanel::Failed:
+            cerr << "CRITICAL: PipeRead failed" << endl;
+            return true;
+        case okCFrontPanel::Timeout:
+            cerr << "CRITICAL: PipeRead timeout" << endl;
+            return true;
+        default:
+            return false;
+    }
+}
+
+// Reset ddr2 machine and FIFO pointers, use this after operations finishing run() finishes
+// to reset FIFO states.
+/*
+void Rhd2000EvalBoard::resetFIFO() {
+    dev->SetWireInValue(WireInResetRun, 0x10, 0x10); // set bit 5 of WireInResetRun
+    dev->UpdateWireIns();
+    dev->SetWireInValue(WireInResetRun, 0x00, 0x0f); // clear bit 5 of WireInResetRun
+    dev->UpdateWireIns();
+    cout << "Finished resetting FIFO, numWordsInFifo=" << numWordsInFifo() << endl;
+}
+*/

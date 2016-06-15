@@ -33,6 +33,16 @@
 
 #include <queue>
 //#include "okFrontPanelDLL.h"
+#include <time.h>
+#define CLOCKS_PER_MS (CLOCKS_PER_SEC/1000)
+
+#ifndef max
+#   define max(x,y) ((x)<(y)?(y):(x))
+#endif
+
+#ifndef min
+#   define min(x,y) ((x)>(y)?(y):(x))
+#endif
 
 using namespace std;
 
@@ -159,8 +169,14 @@ public:
     int getBoardMode() const;
     int getCableDelay(BoardPort port) const;
     void getCableDelay(vector<int> &delays) const;
+    
+    // Added by Allen
     bool isUSB3();
-
+    void resetTimer();
+    unsigned int getGlitchCount();
+    void resetGlitchCount();
+    //void resetFIFO();
+    
 private:
     okCFrontPanel *dev;
     AmplifierSampleRate sampleRate;
@@ -232,11 +248,15 @@ private:
     bool isDcmProgDone() const;
     bool isDataClockLocked() const;
 
-    bool readAdditionalDataWords(unsigned int numWords, unsigned int errorPoint, unsigned int bufferLength);
+    bool readAdditionalDataWords(unsigned int numWords, unsigned int errorPoint, unsigned int bufferLength, unsigned int sampleSizeInBytes);
     
     // Additions for USB3
     bool usb3;
     int BTblockSize; // throttld pipe blockSize in bytes, relevant if isUSB3=true
+    unsigned int glitchCounter; // profiling glitch occurences
+    clock_t startTime;
+    bool printFailedErrorCode(long errorCode);
+
 
 };
 

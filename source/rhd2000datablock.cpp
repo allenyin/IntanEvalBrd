@@ -109,9 +109,12 @@ bool Rhd2000DataBlock::checkUsbHeader(unsigned char usbBuffer[], int index)
     x8 = usbBuffer[index + 7];
 
     header = (x8 << 56) + (x7 << 48) + (x6 << 40) + (x5 << 32) + (x4 << 24) + (x3 << 16) + (x2 << 8) + (x1 << 0);
+    /*
     if (header != RHD2000_HEADER_MAGIC_NUMBER) {
         cout << "checkUsbHeader: got " << hex << header << endl;
     }
+    */
+
     return (header == RHD2000_HEADER_MAGIC_NUMBER);
 }
 
@@ -146,9 +149,14 @@ int Rhd2000DataBlock::convertUsbWord(unsigned char usbBuffer[], int index)
 bool Rhd2000DataBlock::fillFromUsbBuffer(unsigned char usbBuffer[], int blockIndex, int numDataStreams, int nSamples)
 {
     int index, t, channel, stream, i;
-    int samplesToRead = (nSamples = -1) ? samplesPerDataBlock : nSamples;
+    int samplesToRead = ((nSamples = -1) ? samplesPerDataBlock : nSamples);
 
     cout << "fillFromUsbBuffer will read " << samplesToRead << " samples" << endl;
+    if (samplesToRead != samplesPerDataBlock) {
+        printf("fillFromUsbBuffer: samplesPerDataBlock=%d, samplesToRead=%d, nSamples=%d\n",\
+                samplesPerDataBlock, samplesToRead, nSamples);
+    }
+
     index = blockIndex * 2 * calculateDataBlockSizeInWords(numDataStreams, usb3);
     for (t = 0; t < samplesToRead; ++t) {
         if (!checkUsbHeader(usbBuffer, index)) {
