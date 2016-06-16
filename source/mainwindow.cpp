@@ -2690,6 +2690,7 @@ void MainWindow::runInterfaceBoard()
 
     evalBoard->resetTimer();
     evalBoard->resetGlitchCount();
+    evalBoard->resetTotalByteCount();
 
     //int readDataBlocksCounter = 0;
     while (running) {

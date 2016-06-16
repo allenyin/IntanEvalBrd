@@ -50,7 +50,8 @@ Rhd2000EvalBoard::Rhd2000EvalBoard(int blockSize)
 
     cableDelay.resize(4, -1);
     glitchCounter = 0;
-    startTime = clock();
+    startTime = chrono::steady_clock::now();
+    totalByteCount = 0;
 }
 
 // Find an Opal Kelly XEM6010-LX45 or XEM6310-LX150 board attached to a USB port and open it.
@@ -1496,12 +1497,12 @@ bool Rhd2000EvalBoard::readDataBlocks(int numBlocks, queue<Rhd2000DataBlock> &da
     int sample;
     int index = 0;
     int lag;
-    unsigned int elapsed = 0;
     for (sample = 0; sample < numBlocks * samplesPerDataBlock; ++sample) {
         if (!(dataBlock->checkUsbHeader(usbBuffer, index))) {
             glitchCounter++;
-            elapsed = (clock() - startTime) / CLOCKS_PER_MS;
-            printf("%d USB glitches detected at %d, sample=%d\n", glitchCounter, elapsed, sample);
+            auto elapsed = chrono::duration<double,milli>(chrono::steady_clock::now()-startTime).count();
+            cout << glitchCounter << "USB glitches detected at " << elapsed << " ms, sample=" << sample << endl;
+            cout << "Glitch happened at totalByteCount=" << (totalByteCount+sample*sampleSizeInBytes) << endl;
 
             if (sample > 0) {
                 // If we have a bad data sample header on any sample but the first, we shouldn't trust
@@ -1547,6 +1548,7 @@ bool Rhd2000EvalBoard::readDataBlocks(int numBlocks, queue<Rhd2000DataBlock> &da
         dataQueue.push(*dataBlock);
     }
     delete dataBlock;
+    totalByteCount += numBytesToRead;
 
     return true;
 }
@@ -1719,7 +1721,7 @@ bool Rhd2000EvalBoard::isUSB3()
 }  
 
 void Rhd2000EvalBoard::resetTimer() {
-    startTime = clock();
+    startTime = chrono::steady_clock::now();
 }
 
 unsigned int Rhd2000EvalBoard::getGlitchCount() {
@@ -1750,14 +1752,6 @@ bool Rhd2000EvalBoard::printFailedErrorCode(long errorCode) {
     }
 }
 
-// Reset ddr2 machine and FIFO pointers, use this after operations finishing run() finishes
-// to reset FIFO states.
-/*
-void Rhd2000EvalBoard::resetFIFO() {
-    dev->SetWireInValue(WireInResetRun, 0x10, 0x10); // set bit 5 of WireInResetRun
-    dev->UpdateWireIns();
-    dev->SetWireInValue(WireInResetRun, 0x00, 0x0f); // clear bit 5 of WireInResetRun
-    dev->UpdateWireIns();
-    cout << "Finished resetting FIFO, numWordsInFifo=" << numWordsInFifo() << endl;
+void Rhd2000EvalBoard::resetTotalByteCount() {
+    totalByteCount = 0;
 }
-*/

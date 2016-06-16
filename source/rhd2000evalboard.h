@@ -33,8 +33,8 @@
 
 #include <queue>
 //#include "okFrontPanelDLL.h"
-#include <time.h>
-#define CLOCKS_PER_MS (CLOCKS_PER_SEC/1000)
+#include <chrono>
+
 
 #ifndef max
 #   define max(x,y) ((x)<(y)?(y):(x))
@@ -175,7 +175,7 @@ public:
     void resetTimer();
     unsigned int getGlitchCount();
     void resetGlitchCount();
-    //void resetFIFO();
+    void resetTotalByteCount();
     
 private:
     okCFrontPanel *dev;
@@ -254,8 +254,9 @@ private:
     bool usb3;
     int BTblockSize; // throttld pipe blockSize in bytes, relevant if isUSB3=true
     unsigned int glitchCounter; // profiling glitch occurences
-    clock_t startTime;
+    chrono::time_point<chrono::steady_clock> startTime;
     bool printFailedErrorCode(long errorCode);
+    long totalByteCount;    // how many bytes have we read in so far
 
 
 };
