@@ -110,7 +110,8 @@ MainWindow::MainWindow()
     saveTriggerChannel = true;
 
     signalSources = new SignalSources();
-
+    
+    synthMode = false;  // if board present, will be reset in openInterfaceBoard.
     openInterfaceBoard();
     
     usb3 = (evalBoard == 0) ? false : evalBoard->isUSB3();
@@ -2650,6 +2651,9 @@ void MainWindow::runInterfaceBoard()
         evalBoard->resetGlitchCount();
         evalBoard->resetTotalByteCount();
     }
+    
+    if (synthMode == true) printf("Before running, synthMode is true\n");
+    if (synthMode == false) printf("Before running, synthMode is false\n");
 
     //int readDataBlocksCounter = 0;
     while (running) {
@@ -2669,6 +2673,7 @@ void MainWindow::runInterfaceBoard()
             // statusBarLabel->setText("Running.  Extra CPU cycles: " + QString::number(extraCycles));
 
             if (synthMode) {
+                cout << "synthetic data" << endl;
                 timer.start();  // restart timer
                 fifoPercentageFull = 0.0;
 
