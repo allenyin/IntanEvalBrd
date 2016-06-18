@@ -36,6 +36,7 @@
 #include "signalgroup.h"
 #include "signalchannel.h"
 #include "rhd2000datablock.h"
+#include "rhd2000evalboard.h"
 
 using namespace std;
 
@@ -78,23 +79,27 @@ SignalProcessor::SignalProcessor(bool isusb3)
     samplesPerDataBlock = Rhd2000DataBlock::getSamplesPerDataBlock(usb3);
     
     // allocate 1D array dataStreamBuffer
-    dataStreamBuffer = new char[2 * MAX_NUM_DATA_STREAMS * 32 * samplesPerDataBlock];
+    dataStreamBuffer = new char[2 * MAX_NUM_DATA_STREAMS(usb3) * 32 * samplesPerDataBlock];
     // allocate array of arrays dataStreamBufferArray. Note this is different from 2D array
     // which occupies contiguous memory...not sure how this will impact speed.
-    dataStreamBufferArray = new char*[MAX_NUM_DATA_STREAMS * 32];
-    for (int i=0; i < (MAX_NUM_DATA_STREAMS * 32); ++i) {
+    dataStreamBufferArray = new char*[MAX_NUM_DATA_STREAMS(usb3) * 32];
+    for (int i=0; i < (MAX_NUM_DATA_STREAMS(usb3) * 32); ++i) {
         dataStreamBufferArray[i] = new char[2 * samplesPerDataBlock* 16];
     }
+
+    // create bufferArrayIndex
+    bufferArrayIndex = new int[MAX_NUM_DATA_STREAMS(usb3)];
 }
 
 // Destructor
 SignalProcessor::~SignalProcessor() {
     delete[] dataStreamBuffer;
 
-    for (int i=0; i < (MAX_NUM_DATA_STREAMS * 32); ++i) {
+    for (int i=0; i < (MAX_NUM_DATA_STREAMS(usb3) * 32); ++i) {
         delete[] dataStreamBufferArray[i];
     }
     delete[] dataStreamBufferArray;
+    delete[] bufferArrayIndex;
 }
 
 // Allocate memory to store waveform data.

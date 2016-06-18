@@ -30,7 +30,8 @@
 
 // RHD2000 Evaluation Board constants
 #define BTPIPE_BLOCK_SIZE_USB3 512// bytes
-#define MAX_NUM_DATA_STREAMS  8
+#define MAX_NUM_HEADSTAGES 8
+//#define MAX_NUM_DATA_STREAMS  8
 
 // Special Unicode characters, as QString data type
 #define QSTRING_MU_SYMBOL  ((QString)((QChar)0x03bc))

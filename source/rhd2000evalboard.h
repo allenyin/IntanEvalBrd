@@ -23,18 +23,15 @@
 
 #define USB_BUFFER_SIZE 2400000
 #define RHYTHM_BOARD_ID 500
-#define MAX_NUM_DATA_STREAMS 8
+#define MAX_NUM_DATA_STREAMS_USB2 8
+#define MAX_NUM_DATA_STREAMS_USB3 16
 #define FIFO_CAPACITY_WORDS 67108864
-
-// Duplicate define from rhd2000datablock.h...should probably use an extern var
-//#define SAMPLES_PER_DATA_BLOCK_USB2 60
-//#define SAMPLES_PER_DATA_BLOCK_USB3 64
-//#define BLOCK_SIZE_USB3 512 // block throttled pipeout for USB3, in bytes
+#define BLOCK_SIZE_USB3 512 // 512 bytes block-throttled pipe size. Default arg for constructor 
+#define MAX_NUM_DATA_STREAMS(usb3) (usb3 ? MAX_NUM_DATA_STREAMS_USB3 : MAX_NUM_DATA_STREAMS_USB2)
 
 #include <queue>
 //#include "okFrontPanelDLL.h"
 #include <chrono>
-
 
 #ifndef max
 #   define max(x,y) ((x)<(y)?(y):(x))
@@ -53,7 +50,8 @@ class Rhd2000EvalBoard
 {
 
 public:
-    Rhd2000EvalBoard(int blockSize=512);
+    Rhd2000EvalBoard(int blockSize=BLOCK_SIZE_USB3);
+    ~Rhd2000EvalBoard();
 
     int open();
     bool uploadFpgaBitfile(string filename);
@@ -176,12 +174,13 @@ public:
     unsigned int getGlitchCount();
     void resetGlitchCount();
     void resetTotalByteCount();
+    bool isStreamEnabled(int streamIndex);
     
 private:
     okCFrontPanel *dev;
     AmplifierSampleRate sampleRate;
     int numDataStreams; // total number of data streams currently enabled
-    int dataStreamEnabled[MAX_NUM_DATA_STREAMS]; // 0 (disabled) or 1 (enabled)
+    int dataStreamEnabled[MAX_NUM_DATA_STREAMS_USB3]; // 0 (disabled) or 1 (enabled)
     vector<int> cableDelay;
     
     // Buffer for reading bytes from USB interface
@@ -207,8 +206,8 @@ private:
         WireInAuxCmdLoop2 = 0x0f,
         WireInAuxCmdLoop3 = 0x10,
         WireInLedDisplay = 0x11,
-        WireInDataStreamSel1234 = 0x12,
-        WireInDataStreamSel5678 = 0x13,
+        WireInDataStreamSel1234 = 0x12, // also endpoint for datastream_sel 9,10,11,12
+        WireInDataStreamSel5678 = 0x13, // also endpoint for datastream_sel 13,14,15,16
         WireInDataStreamEn = 0x14,
         WireInTtlOut = 0x15,
         WireInDacSource1 = 0x16,

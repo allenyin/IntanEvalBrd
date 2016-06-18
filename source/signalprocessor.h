@@ -172,7 +172,8 @@ private:
     // and use QDataStream::writeRawData(const char *s, int len) to stream out more efficiently.
     //char dataStreamBuffer[2 * MAX_NUM_DATA_STREAMS * 32 * SAMPLES_PER_DATA_BLOCK];
     //char dataStreamBufferArray[MAX_NUM_DATA_STREAMS * 32][2 * SAMPLES_PER_DATA_BLOCK * 16]; // Assume maximum number of data blocks = 16
-    int bufferArrayIndex[MAX_NUM_DATA_STREAMS * 32];
+    //int bufferArrayIndex[MAX_NUM_DATA_STREAMS(usb3) * 32];
+    int *bufferArrayIndex; // size depends on usb2 or usb3
     
     // Modification to accomodate USB3 having different SAMPLES_PER_DATA_BLOCK, we don't know size
     // until runtime. Creation of arrays are now moved into the constructor

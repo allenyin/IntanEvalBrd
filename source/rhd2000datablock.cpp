@@ -151,7 +151,7 @@ bool Rhd2000DataBlock::fillFromUsbBuffer(unsigned char usbBuffer[], int blockInd
     int index, t, channel, stream, i;
     int samplesToRead = ((nSamples = -1) ? samplesPerDataBlock : nSamples);
 
-    cout << "fillFromUsbBuffer will read " << samplesToRead << " samples" << endl;
+    //cout << "fillFromUsbBuffer will read " << samplesToRead << " samples" << endl;
     if (samplesToRead != samplesPerDataBlock) {
         printf("fillFromUsbBuffer: samplesPerDataBlock=%d, samplesToRead=%d, nSamples=%d\n",\
                 samplesPerDataBlock, samplesToRead, nSamples);
@@ -199,7 +199,7 @@ bool Rhd2000DataBlock::fillFromUsbBuffer(unsigned char usbBuffer[], int blockInd
         ttlOut[t] = convertUsbWord(usbBuffer, index);
         index += 2;
     }
-    cout << "fillFromUsbBuffer: parsed " << t << " datablocks with valid header" << endl;
+    //cout << "fillFromUsbBuffer: parsed " << t << " datablocks with valid header" << endl;
     return true;
 }
 

@@ -38,13 +38,13 @@ using namespace std;
 // Constructor.  Set sampling rate variable to 30.0 kS/s/channel (FPGA default).
 Rhd2000EvalBoard::Rhd2000EvalBoard(int blockSize)
 {
-    int i;
     sampleRate = SampleRate30000Hz; // Rhythm FPGA boots up with 30.0 kS/s/channel sampling rate
     numDataStreams = 0;
+    dev = 0;
     usb3 = false;                 
     BTblockSize = blockSize;
 
-    for (i = 0; i < MAX_NUM_DATA_STREAMS; ++i) {
+    for (int i = 0; i < MAX_NUM_DATA_STREAMS(usb3); ++i) {
         dataStreamEnabled[i] = 0;
     }
 
@@ -52,6 +52,12 @@ Rhd2000EvalBoard::Rhd2000EvalBoard(int blockSize)
     glitchCounter = 0;
     startTime = chrono::steady_clock::now();
     totalByteCount = 0;
+}
+
+// Destructor: Deletes the device
+Rhd2000EvalBoard::~Rhd2000EvalBoard()
+{
+    if (dev != 0) delete dev;
 }
 
 // Find an Opal Kelly XEM6010-LX45 or XEM6310-LX150 board attached to a USB port and open it.
@@ -85,6 +91,7 @@ int Rhd2000EvalBoard::open()
     cout << endl;
 
     // Find first device in list of type XEM6010LX45 or XEM6310LX150
+    // TODO: Implementing recognizing multiple devices
     for (i = 0; i < nDevices; ++i) {
         if (dev->GetDeviceListModel(i) == OK_PRODUCT_XEM6310LX150) {
             serialNumber = dev->GetDeviceListSerial(i);
@@ -160,6 +167,7 @@ bool Rhd2000EvalBoard::uploadFpgaBitfile(string filename)
     if (dev->IsFrontPanelEnabled() == false) {
         cerr << "Opal Kelly FrontPanel support is not enabled in this FPGA configuration." << endl;
         delete dev;
+        dev = 0;
         return(false);
     }
 
@@ -167,7 +175,7 @@ bool Rhd2000EvalBoard::uploadFpgaBitfile(string filename)
     dev->UpdateWireOuts();
     boardId = dev->GetWireOutValue(WireOutBoardId);
     boardVersion = dev->GetWireOutValue(WireOutBoardVersion);
-
+    
     if (boardId != RHYTHM_BOARD_ID) {
         cerr << "FPGA configuration does not support Rhythm.  Incorrect board ID: " << boardId << endl;
         return(false);
@@ -231,8 +239,20 @@ void Rhd2000EvalBoard::initialize()
     setDataSource(6, PortC2);
     setDataSource(7, PortD2);
 
+    if (usb3)
+	{
+        // Now we have two streams relaying each of the 8 primary streams
+		setDataSource(8, PortA1);
+		setDataSource(9, PortB1);
+		setDataSource(10, PortC1);
+		setDataSource(11, PortD1);
+		setDataSource(12, PortA2);
+		setDataSource(13, PortB2);
+		setDataSource(14, PortC2);
+		setDataSource(15, PortD2);
+	}
     enableDataStream(0, true);        // start with only one data stream enabled
-    for (i = 1; i < MAX_NUM_DATA_STREAMS; i++) {
+    for (i = 1; i < MAX_NUM_DATA_STREAMS(usb3); i++) {
         enableDataStream(i, false);
     }
 
@@ -671,14 +691,14 @@ void Rhd2000EvalBoard::setContinuousRunMode(bool continuousMode)
 {
     long res;
     if (continuousMode) {
-        printf("Setting continousMode true\n");
+        printf("Turning on continousMode\n");
         res = dev->SetWireInValue(WireInResetRun, 0x02, 0x02);
     } else {
-        printf("Setting continuousMode false\n");
+        printf("Turning off continuousMode\n");
         res = dev->SetWireInValue(WireInResetRun, 0x00, 0x02);
     }
     dev->UpdateWireIns();
-    cout << "setContinousRunMode: res=" << res << endl;
+    //cout << "setContinousRunMode: res=" << res << endl;
 }
 
 // Set maxTimeStep for cases where continuousMode == false.
@@ -846,8 +866,10 @@ void Rhd2000EvalBoard::setDataSource(int stream, BoardDataSource dataSource)
     int bitShift;
     OkEndPoint endPoint;
 
-    if (stream < 0 || stream > 7) {
-        cerr << "Error in Rhd2000EvalBoard::setDataSource: stream out of range." << endl;
+    //cout << "Rhd2000EvalBoard::setDataSource: usb3=" << usb3 << endl;
+    if (stream < 0 || stream > (MAX_NUM_DATA_STREAMS(usb3) - 1)) {
+        cerr << "Error in Rhd2000EvalBoard::setDataSource: stream=" << stream << " out of range.";
+        cerr << "MAX_NUM_DATA_STREAMS=" << MAX_NUM_DATA_STREAMS(usb3) << endl;
         return;
     }
 
@@ -884,17 +906,49 @@ void Rhd2000EvalBoard::setDataSource(int stream, BoardDataSource dataSource)
         endPoint = WireInDataStreamSel5678;
         bitShift = 12;
         break;
+    case 8:
+		endPoint = WireInDataStreamSel1234;
+		bitShift = 16;
+		break;
+	case 9:
+		endPoint = WireInDataStreamSel1234;
+		bitShift = 20;
+		break;
+	case 10:
+		endPoint = WireInDataStreamSel1234;
+		bitShift = 24;
+		break;
+	case 11:
+		endPoint = WireInDataStreamSel1234;
+		bitShift = 28;
+		break;
+	case 12:
+		endPoint = WireInDataStreamSel5678;
+		bitShift = 16;
+		break;
+	case 13:
+		endPoint = WireInDataStreamSel5678;
+		bitShift = 20;
+		break;
+	case 14:
+		endPoint = WireInDataStreamSel5678;
+		bitShift = 24;
+		break;
+	case 15:
+		endPoint = WireInDataStreamSel5678;
+		bitShift = 28;
+		break;
     }
 
     dev->SetWireInValue(endPoint, dataSource << bitShift, 0x000f << bitShift);
     dev->UpdateWireIns();
 }
 
-// Enable or disable one of the eight available USB data streams (0-7).
+// Enable or disable one of the available USB data streams (0-7) or (0-15).
 void Rhd2000EvalBoard::enableDataStream(int stream, bool enabled)
 {
-    if (stream < 0 || stream > (MAX_NUM_DATA_STREAMS - 1)) {
-        cerr << "Error in Rhd2000EvalBoard::setDataSource: stream out of range." << endl;
+    if (stream < 0 || stream > (MAX_NUM_DATA_STREAMS(usb3) - 1)) {
+        cerr << "Error in Rhd2000EvalBoard::enableDataStream: stream out of range." << endl;
         return;
     }
 
@@ -990,31 +1044,33 @@ void Rhd2000EvalBoard::enableDac(int dacChannel, bool enabled)
         cerr << "Error in Rhd2000EvalBoard::enableDac: dacChannel out of range." << endl;
         return;
     }
+    
+    UINT32 dacEnMask = usb3 ? 0x0400 : 0x0200;  // DAC_en bit different for USB3
 
     switch (dacChannel) {
     case 0:
-        dev->SetWireInValue(WireInDacSource1, (enabled ? 0x0200 : 0x0000), 0x0200);
+        dev->SetWireInValue(WireInDacSource1, (enabled ? dacEnMask : 0x0000), dacEnMask);
         break;
     case 1:
-        dev->SetWireInValue(WireInDacSource2, (enabled ? 0x0200 : 0x0000), 0x0200);
+        dev->SetWireInValue(WireInDacSource2, (enabled ? dacEnMask : 0x0000), dacEnMask);
         break;
     case 2:
-        dev->SetWireInValue(WireInDacSource3, (enabled ? 0x0200 : 0x0000), 0x0200);
+        dev->SetWireInValue(WireInDacSource3, (enabled ? dacEnMask : 0x0000), dacEnMask);
         break;
     case 3:
-        dev->SetWireInValue(WireInDacSource4, (enabled ? 0x0200 : 0x0000), 0x0200);
+        dev->SetWireInValue(WireInDacSource4, (enabled ? dacEnMask : 0x0000), dacEnMask);
         break;
     case 4:
-        dev->SetWireInValue(WireInDacSource5, (enabled ? 0x0200 : 0x0000), 0x0200);
+        dev->SetWireInValue(WireInDacSource5, (enabled ? dacEnMask : 0x0000), dacEnMask);
         break;
     case 5:
-        dev->SetWireInValue(WireInDacSource6, (enabled ? 0x0200 : 0x0000), 0x0200);
+        dev->SetWireInValue(WireInDacSource6, (enabled ? dacEnMask : 0x0000), dacEnMask);
         break;
     case 6:
-        dev->SetWireInValue(WireInDacSource7, (enabled ? 0x0200 : 0x0000), 0x0200);
+        dev->SetWireInValue(WireInDacSource7, (enabled ? dacEnMask : 0x0000), dacEnMask);
         break;
     case 7:
-        dev->SetWireInValue(WireInDacSource8, (enabled ? 0x0200 : 0x0000), 0x0200);
+        dev->SetWireInValue(WireInDacSource8, (enabled ? dacEnMask : 0x0000), dacEnMask);
         break;
     }
     dev->UpdateWireIns();
@@ -1045,8 +1101,8 @@ void Rhd2000EvalBoard::setAudioNoiseSuppress(int noiseSuppress)
     dev->UpdateWireIns();
 }
 
-// Assign a particular data stream (0-7) to a DAC channel (0-7).  Setting stream
-// to 8 selects DacManual1 value; setting stream to 9 selects DacManual2 value.
+// Assign a particular data stream (0-7, or 0-15) to a DAC channel (0-7).  Setting stream
+// to 8 (or 16 if USB3) selects DacManual1 value; setting stream to 9 (or 10 if USB3) selects DacManual2 value.
 void Rhd2000EvalBoard::selectDacDataStream(int dacChannel, int stream)
 {
     if (dacChannel < 0 || dacChannel > 7) {
@@ -1054,35 +1110,37 @@ void Rhd2000EvalBoard::selectDacDataStream(int dacChannel, int stream)
         return;
     }
 
-    if (stream < 0 || stream > 9) {
+    if (stream < 0 || stream > MAX_NUM_DATA_STREAMS(usb3)+1) {
         cerr << "Error in Rhd2000EvalBoard::selectDacDataStream: stream out of range." << endl;
         return;
     }
 
+    UINT32 dacStreamMask = usb3 ? 0x03e0 : 0x01e0;
+
     switch (dacChannel) {
     case 0:
-        dev->SetWireInValue(WireInDacSource1, stream << 5, 0x01e0);
+        dev->SetWireInValue(WireInDacSource1, stream << 5, dacStreamMask);
         break;
     case 1:
-        dev->SetWireInValue(WireInDacSource2, stream << 5, 0x01e0);
+        dev->SetWireInValue(WireInDacSource2, stream << 5, dacStreamMask);
         break;
     case 2:
-        dev->SetWireInValue(WireInDacSource3, stream << 5, 0x01e0);
+        dev->SetWireInValue(WireInDacSource3, stream << 5, dacStreamMask);
         break;
     case 3:
-        dev->SetWireInValue(WireInDacSource4, stream << 5, 0x01e0);
+        dev->SetWireInValue(WireInDacSource4, stream << 5, dacStreamMask);
         break;
     case 4:
-        dev->SetWireInValue(WireInDacSource5, stream << 5, 0x01e0);
+        dev->SetWireInValue(WireInDacSource5, stream << 5, dacStreamMask);
         break;
     case 5:
-        dev->SetWireInValue(WireInDacSource6, stream << 5, 0x01e0);
+        dev->SetWireInValue(WireInDacSource6, stream << 5, dacStreamMask);
         break;
     case 6:
-        dev->SetWireInValue(WireInDacSource7, stream << 5, 0x01e0);
+        dev->SetWireInValue(WireInDacSource7, stream << 5, dacStreamMask);
         break;
     case 7:
-        dev->SetWireInValue(WireInDacSource8, stream << 5, 0x01e0);
+        dev->SetWireInValue(WireInDacSource8, stream << 5, dacStreamMask);
         break;
     }
     dev->UpdateWireIns();
@@ -1362,25 +1420,6 @@ void Rhd2000EvalBoard::flush()
             }
         }
     }
-    /*
-    while (numWordsInFifo() > 0) {
-        bytesToFlush = 2*numWordsInFifo();
-        if (usb3) {
-            bytesToFlush = (2*numWordsInFifo() % BTblockSize == 0) ? (2*numWordsInFifo()) : (2*numWordsInFifo()/BTblockSize*BTblockSize);
-            if (bytesToFlush == 0) {
-                printf("USB3: Bytes in left FIFO less than BTblockSize, resetting FIFO...\n");
-                return;
-            } else {
-                errorCode = dev->ReadFromBlockPipeOut(PipeOutData, BTblockSize, bytesToFlush, usbBuffer);
-            }
-        } else {
-            errorCode = dev->ReadFromPipeOut(PipeOutData, bytesToFlush, usbBuffer);
-        }
-        if (!printFailedErrorCode(errorCode)) {
-            printf("Flushed %d bytes\n", bytesToFlush);
-        }
-    }
-    */
 }
 
 // Read data block from the USB interface, if one is available.  Returns true if data block
@@ -1391,7 +1430,7 @@ bool Rhd2000EvalBoard::readDataBlock(Rhd2000DataBlock *dataBlock, int nSamples)
     long res;
 
     numBytesToRead = 2 * dataBlock->calculateDataBlockSizeInWords(numDataStreams, usb3, nSamples);
-    printf("readDataBlock: numDataStreams=%d, numBytesToRead=%d bytes\n", numDataStreams, numBytesToRead);
+    //printf("readDataBlock: numDataStreams=%d, numBytesToRead=%d bytes\n", numDataStreams, numBytesToRead);
 
     if (numBytesToRead > USB_BUFFER_SIZE) {
         cerr << "Error in Rhd2000EvalBoard::readDataBlock: USB buffer size exceeded.  " <<
@@ -1400,7 +1439,7 @@ bool Rhd2000EvalBoard::readDataBlock(Rhd2000DataBlock *dataBlock, int nSamples)
     }
 
     if (usb3) {
-        printf("USB3 block pipe read: blockSize=%d bytes\n", BTblockSize);
+        printf("readDataBlock: USB3 block pipe read: blockSize=%d bytes\n", BTblockSize);
         res = dev->ReadFromBlockPipeOut(PipeOutData, BTblockSize, numBytesToRead, usbBuffer);
     } else {
         res = dev->ReadFromPipeOut(PipeOutData, numBytesToRead, usbBuffer);
@@ -1409,10 +1448,7 @@ bool Rhd2000EvalBoard::readDataBlock(Rhd2000DataBlock *dataBlock, int nSamples)
     printFailedErrorCode(res);
 
     
-
     return dataBlock->fillFromUsbBuffer(usbBuffer, 0, numDataStreams, nSamples);
-
-    //return true;
 }
 
 // Reads a certain number of USB data blocks, if the specified number is available, and appends them
@@ -1420,12 +1456,10 @@ bool Rhd2000EvalBoard::readDataBlock(Rhd2000DataBlock *dataBlock, int nSamples)
 // 
 bool Rhd2000EvalBoard::readDataBlocks(int numBlocks, queue<Rhd2000DataBlock> &dataQueue)
 {
-    //printf("readDataBlocks()\n");
     unsigned int numWordsToRead, numBytesToRead;
     int i;
     long res;
     Rhd2000DataBlock *dataBlock;
-    dataBlock = new Rhd2000DataBlock(numDataStreams, usb3);
     numWordsToRead = numBlocks * dataBlock->calculateDataBlockSizeInWords(numDataStreams, usb3);
     
     if ( usb3 && ((numWordsToRead*2) % BTblockSize != 0)) {
@@ -1451,9 +1485,13 @@ bool Rhd2000EvalBoard::readDataBlocks(int numBlocks, queue<Rhd2000DataBlock> &da
         res = dev->ReadFromPipeOut(PipeOutData, numBytesToRead, usbBuffer);
     }
 
+    if (printFailedErrorCode(res)) {
+        cerr << "Error in Rhd2000EvalBoard::readDataBlocks: pipe read failed" << endl;
+    }
 
-    // USB data error checking added for version 1.5
+    dataBlock = new Rhd2000DataBlock(numDataStreams, usb3);
 
+    // USB data error checking added for version 1.5 by Intan
     /*
     // Spoof USB glitches by dropping bytes (for debugging purposes only)
     static int glitchCounter = 0;
@@ -1754,4 +1792,11 @@ bool Rhd2000EvalBoard::printFailedErrorCode(long errorCode) {
 
 void Rhd2000EvalBoard::resetTotalByteCount() {
     totalByteCount = 0;
+}
+
+bool Rhd2000EvalBoard::isStreamEnabled(int streamIndex) {
+    if (streamIndex < 0 || streamIndex > (MAX_NUM_DATA_STREAMS_USB3 - 1)) {
+        return false;
+    }
+    return dataStreamEnabled[streamIndex];
 }

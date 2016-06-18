@@ -87,9 +87,7 @@ MainWindow::MainWindow()
     cableLengthPortC = 1.0;
     cableLengthPortD = 1.0;
 
-    chipId.resize(MAX_NUM_DATA_STREAMS);
-    chipId.fill(-1);
-
+    
     for (int i = 0; i < 16; ++i) {
         ttlOut[i] = 0;
     }
@@ -113,14 +111,16 @@ MainWindow::MainWindow()
 
     signalSources = new SignalSources();
 
-    channelVisible.resize(MAX_NUM_DATA_STREAMS);
-    for (int i = 0; i < MAX_NUM_DATA_STREAMS; ++i) {
+    openInterfaceBoard();
+    
+    usb3 = (evalBoard == 0) ? false : evalBoard->isUSB3();
+    channelVisible.resize(MAX_NUM_DATA_STREAMS(usb3));
+    for (int i = 0; i < MAX_NUM_DATA_STREAMS(usb3); ++i) {
         channelVisible[i].resize(32);
         channelVisible[i].fill(false);
     }
-
-    openInterfaceBoard();
-    usb3 = (evalBoard == 0) ? false : evalBoard->isUSB3();
+    chipId.resize(MAX_NUM_DATA_STREAMS(usb3));  
+    chipId.fill(-1);
 
     // signalProcessor init
     signalProcessor = new SignalProcessor(usb3);
@@ -1858,17 +1858,16 @@ void MainWindow::initInterfaceBoard()
     // We don't need to do anything with this data block; it was used to configure
     // the RHD2000 amplifier chips and to run ADC calibration.
     delete dataBlock;
- 
+
 //---------------------------------------------------------------
 // TEST: Run 64 samples at a time with 1 datastream enabled, see how many valid datablocks
 // with valid header we can get. Each iteration would mean 30 valid datablocks
-
-/* 
+/*
     evalBoard->enableDataStream(1, true);  // 2 streams?
     evalBoard->enableDataStream(2, true);  // 3 streams?
-    //evalBoard->enableDataStream(3, true);  // 4 streams?
-    //evalBoard->enableDataStream(4, true);  // 5 streams?
-    //evalBoard->enableDataStream(5, true);  // 6 streams?
+    evalBoard->enableDataStream(3, true);  // 4 streams?
+    evalBoard->enableDataStream(4, true);  // 5 streams?
+    evalBoard->enableDataStream(5, true);  // 6 streams?
     //evalBoard->enableDataStream(6, true);  // 7 streams?
     //evalBoard->enableDataStream(7, true);  // 8 streams?
 
@@ -1895,41 +1894,7 @@ void MainWindow::initInterfaceBoard()
     }
     delete dataBlock;
     cout << "---TEST validBlocks finished---" << endl << endl;
-*/  
-//-----------------------------------------------------------
-
-/*
-    // Reduced initializatin sequence - Default commandList length is 60.
-    // With 1 datastream running, this will result in corrupted data, so 
-    // run with timestep=30 twice instead.
-    // Datablock has enough space for 60 samples
-    Rhd2000DataBlock *dataBlock = new Rhd2000DataBlock(evalBoard->getNumEnabledDataStreams());
-    // But we will only use half of that
-    evalBoard->setMaxTimeStep(30);
-    evalBoard->setContinuousRunMode(false);
-    // first 30 run
-    evalBoard->selectAuxCommandLength(Rhd2000EvalBoard::AuxCmd3, 0, 29);
-    evalBoard->run();
-    while (evalBoard->isRunning()) {
-        qApp->processEvents();
-    }
-    if (! evalBoard->readDataBlock(dataBlock, 30)) {
-        cerr << "Error in ADC calibration sequence first half." << endl;
-    }
-    // second half of command list
-    evalBoard->selectAuxCommandLength(Rhd2000EvalBoard::AuxCmd3, 30, 59);
-    evalBoard->run();
-    while (evalBoard->isRunning()) {
-        qApp->processEvents();
-    }
-    if (evalBoard->readDataBlock(dataBlock, 30)) {
-        cout << "ADC calibration sequence second half success." << endl;
-    }
-    delete dataBlock;
-    // reset auxCommandList
-    evalBoard->selectAuxCommandLength(Rhd2000EvalBoard::AuxCmd3, 0, 59);
 */
-
 //----------------------------------------------------------------------
 
     // Now that ADC calibration has been performed, we switch to the command sequence
@@ -1985,14 +1950,19 @@ void MainWindow::initInterfaceBoard()
 // is inferred from this.
 void MainWindow::findConnectedAmplifiers()
 {
-    int delay, stream, id, i, channel, port, auxName, vddName;
+    int delay, stream, hs, id, i, channel, port, auxName, vddName;
     int register59Value;
     int numChannelsOnPort[4] = {0, 0, 0, 0};
     QVector<int> portIndex, portIndexOld, chipIdOld;
 
-    portIndex.resize(MAX_NUM_DATA_STREAMS);
-    portIndexOld.resize(MAX_NUM_DATA_STREAMS);
-    chipIdOld.resize(MAX_NUM_DATA_STREAMS);
+    // portIndex: holds which port each of the possible streams belong to.
+    // portIndexOld: holds which port each of the MAX_NUM_HEADSTAGES primary streams belong to.
+    // chipId: holds chipId for all streams (-1 if none), include both primary and DDR streams.
+    // chipIdOld: holds chipId for MAX_NUM_HEADSTAGES primary streams.
+
+    portIndex.resize(MAX_NUM_DATA_STREAMS(usb3));
+    portIndexOld.resize(MAX_NUM_HEADSTAGES);
+    chipIdOld.resize(MAX_NUM_HEADSTAGES);
 
     chipId.fill(-1);
     chipIdOld.fill(-1);
@@ -2020,38 +1990,21 @@ void MainWindow::findConnectedAmplifiers()
         Rhd2000EvalBoard::PortD2Ddr };
 
     if (!synthMode) {
+        /* Note on checking delays: since only 8 chips can be connected, we only need to
+         * enable all the non-DDR streams. No need for the other 8 streams yet.
+         */
+
         // Set sampling rate to highest value for maximum temporal resolution.
         changeSampleRate(sampleRateComboBox->count() - 1);
 
-        // Enable all data streams, and set sources to cover one or two chips
+        // Enable 2 primary data streams on each port, and set sources to cover one or two chips
         // on Ports A-D.
-        evalBoard->setDataSource(0, initStreamPorts[0]);
-        evalBoard->setDataSource(1, initStreamPorts[1]);
-        evalBoard->setDataSource(2, initStreamPorts[2]);
-        evalBoard->setDataSource(3, initStreamPorts[3]);
-        evalBoard->setDataSource(4, initStreamPorts[4]);
-        evalBoard->setDataSource(5, initStreamPorts[5]);
-        evalBoard->setDataSource(6, initStreamPorts[6]);
-        evalBoard->setDataSource(7, initStreamPorts[7]);
-
-        portIndexOld[0] = 0;
-        portIndexOld[1] = 0;
-        portIndexOld[2] = 1;
-        portIndexOld[3] = 1;
-        portIndexOld[4] = 2;
-        portIndexOld[5] = 2;
-        portIndexOld[6] = 3;
-        portIndexOld[7] = 3;
-
-        evalBoard->enableDataStream(0, true);
-        evalBoard->enableDataStream(1, true);
-        evalBoard->enableDataStream(2, true);
-        evalBoard->enableDataStream(3, true);
-        evalBoard->enableDataStream(4, true);
-        evalBoard->enableDataStream(5, true);
-        evalBoard->enableDataStream(6, true);
-        evalBoard->enableDataStream(7, true);
-
+        for (i = 0; i < 8; ++i) {
+            evalBoard->setDataSource(i, initStreamPorts[i]);
+            evalBoard->enableDataStream(i, true);
+            portIndexOld[i] = i/2;
+        }
+        
         cout << "\nFinding connected amplifiers: number of enabled data streams=" << evalBoard->getNumEnabledDataStreams() << endl;
 
         evalBoard->selectAuxCommandBank(Rhd2000EvalBoard::PortA,
@@ -2070,9 +2023,9 @@ void MainWindow::findConnectedAmplifiers()
 
         Rhd2000DataBlock *dataBlock =
                 new Rhd2000DataBlock(evalBoard->getNumEnabledDataStreams(), usb3);
-        QVector<int> sumGoodDelays(MAX_NUM_DATA_STREAMS, 0);
-        QVector<int> indexFirstGoodDelay(MAX_NUM_DATA_STREAMS, -1);
-        QVector<int> indexSecondGoodDelay(MAX_NUM_DATA_STREAMS, -1);
+        QVector<int> sumGoodDelays(MAX_NUM_HEADSTAGES, 0);
+        QVector<int> indexFirstGoodDelay(MAX_NUM_HEADSTAGES, -1);
+        QVector<int> indexSecondGoodDelay(MAX_NUM_HEADSTAGES, -1);
 
         // Run SPI command sequence at all 16 possible FPGA MISO delay settings
         // to find optimum delay for each SPI interface cable.
@@ -2092,26 +2045,26 @@ void MainWindow::findConnectedAmplifiers()
             }
 
             // Read the resulting single data block from the USB interface.
-            cout << "In findConnectedAmplifiers(), delay=" << delay << endl;
+            //cout << "In findConnectedAmplifiers(), delay=" << delay << endl;
             evalBoard->readDataBlock(dataBlock);
-            cout << "Finished findConnectedAmplifiers() readDataBlock" << endl;
-            evalBoard->flush();
+            //cout << "Finished findConnectedAmplifiers() readDataBlock" << endl;
+            //evalBoard->flush();
 
             // Read the Intan chip ID number from each RHD2000 chip found.
             // Record delay settings that yield good communication with the chip.
-            for (stream = 0; stream < MAX_NUM_DATA_STREAMS; ++stream) {
-                id = deviceId(dataBlock, stream, register59Value);
+            for (hs = 0; hs < MAX_NUM_HEADSTAGES; ++hs) {
+                id = deviceId(dataBlock, hs, register59Value);
 
                 if (id == CHIP_ID_RHD2132 || id == CHIP_ID_RHD2216 ||
                         (id == CHIP_ID_RHD2164 && register59Value == REGISTER_59_MISO_A)) {
-                    // cout << "Delay: " << delay << " on stream " << stream << " is good." << endl;
-                    sumGoodDelays[stream] = sumGoodDelays[stream] + 1;
-                    if (indexFirstGoodDelay[stream] == -1) {
-                        indexFirstGoodDelay[stream] = delay;
-                        chipIdOld[stream] = id;
-                    } else if (indexSecondGoodDelay[stream] == -1) {
-                        indexSecondGoodDelay[stream] = delay;
-                        chipIdOld[stream] = id;
+                    // cout << "Delay: " << delay << " on headstge" << hs << " is good." << endl;
+                    sumGoodDelays[hs] = sumGoodDelays[hs] + 1;
+                    if (indexFirstGoodDelay[hs] == -1) {
+                        indexFirstGoodDelay[hs] = delay;
+                        chipIdOld[hs] = id;
+                    } else if (indexSecondGoodDelay[hs] == -1) {
+                        indexSecondGoodDelay[hs] = delay;
+                        chipIdOld[hs] = id;
                     }
                 }
             }
@@ -2120,12 +2073,12 @@ void MainWindow::findConnectedAmplifiers()
 
         // Set cable delay settings that yield good communication with each
         // RHD2000 chip.
-        QVector<int> optimumDelay(MAX_NUM_DATA_STREAMS, 0);
-        for (stream = 0; stream < MAX_NUM_DATA_STREAMS; ++stream) {
-            if (sumGoodDelays[stream] == 1 || sumGoodDelays[stream] == 2) {
-                optimumDelay[stream] = indexFirstGoodDelay[stream];
-            } else if (sumGoodDelays[stream] > 2) {
-                optimumDelay[stream] = indexSecondGoodDelay[stream];
+        QVector<int> optimumDelay(MAX_NUM_HEADSTAGES, 0);
+        for (hs = 0; hs < MAX_NUM_HEADSTAGES; ++hs) {
+            if (sumGoodDelays[hs] == 1 || sumGoodDelays[hs] == 2) {
+                optimumDelay[hs] = indexFirstGoodDelay[hs];
+            } else if (sumGoodDelays[hs] > 2) {
+                optimumDelay[hs] = indexSecondGoodDelay[hs];
             }
         }
 
@@ -2142,7 +2095,6 @@ void MainWindow::findConnectedAmplifiers()
 //        cout << "Port B cable delay: " << qMax(optimumDelay[2], optimumDelay[3]) << endl;
 //        cout << "Port C cable delay: " << qMax(optimumDelay[4], optimumDelay[5]) << endl;
 //        cout << "Port D cable delay: " << qMax(optimumDelay[6], optimumDelay[7]) << endl;
-
 
         cableLengthPortA =
                 evalBoard->estimateCableLengthMeters(qMax(optimumDelay[0], optimumDelay[1]));
@@ -2167,49 +2119,51 @@ void MainWindow::findConnectedAmplifiers()
     // of data streams necessary to convey this data over the USB interface.
     int numStreamsRequired = 0;
     bool rhd2216ChipPresent = false;
-    for (stream = 0; stream < MAX_NUM_DATA_STREAMS; ++stream) {
-        if (chipIdOld[stream] == CHIP_ID_RHD2216) {
+    for (hs = 0; hs < MAX_NUM_HEADSTAGES; ++hs) {
+        if (chipIdOld[hs] == CHIP_ID_RHD2216) {
             numStreamsRequired++;
-            if (numStreamsRequired <= MAX_NUM_DATA_STREAMS) {
-                numChannelsOnPort[portIndexOld[stream]] += 16;
+            if (numStreamsRequired <= MAX_NUM_DATA_STREAMS(usb3)) {
+                numChannelsOnPort[portIndexOld[hs]] += 16;
             }
             rhd2216ChipPresent = true;
         }
-        if (chipIdOld[stream] == CHIP_ID_RHD2132) {
+        if (chipIdOld[hs] == CHIP_ID_RHD2132) {
             numStreamsRequired++;
-            if (numStreamsRequired <= MAX_NUM_DATA_STREAMS) {
-                numChannelsOnPort[portIndexOld[stream]] += 32;
+            if (numStreamsRequired <= MAX_NUM_DATA_STREAMS(usb3)) {
+                numChannelsOnPort[portIndexOld[hs]] += 32;
             }
         }
-        if (chipIdOld[stream] == CHIP_ID_RHD2164) {
+        if (chipIdOld[hs] == CHIP_ID_RHD2164) {
             numStreamsRequired += 2;
-            if (numStreamsRequired <= MAX_NUM_DATA_STREAMS) {
-                numChannelsOnPort[portIndexOld[stream]] += 64;
+            if (numStreamsRequired <= MAX_NUM_DATA_STREAMS(usb3)) {
+                numChannelsOnPort[portIndexOld[hs]] += 64;
             }
         }
     }
 
     // If the user plugs in more chips than the USB interface can support, throw
     // up a warning that not all channels will be displayed.
-    if (numStreamsRequired > 8) {
+    if (numStreamsRequired > MAX_NUM_DATA_STREAMS(usb3)) {
         if (rhd2216ChipPresent) {
             QMessageBox::warning(this, tr("Capacity of USB Interface Exceeded"),
-                    tr("This RHD2000 USB interface board can support 256 only amplifier channels."
-                       "<p>More than 256 total amplifier channels are currently connected.  (Each RHD2216 "
+                    tr("This RHD2000 USB interface board can support only %n amplifier channels."
+                       "<p>More than %n total amplifier channels are currently connected.  (Each RHD2216 "
                        "chip counts as 32 channels for USB interface purposes.)"
-                       "<p>Amplifier chips exceeding this limit will not appear in the GUI."));
+                       "<p>Amplifier chips exceeding this limit will not appear in the GUI.", 0, 
+                       usb3 ? 512 : 256));
         } else {
             QMessageBox::warning(this, tr("Capacity of USB Interface Exceeded"),
-                    tr("This RHD2000 USB interface board can support 256 only amplifier channels."
-                       "<p>More than 256 total amplifier channels are currently connected."
-                       "<p>Amplifier chips exceeding this limit will not appear in the GUI."));
+                    tr("This RHD2000 USB interface board can support only %n amplifier channels."
+                       "<p>More than %n total amplifier channels are currently connected."
+                       "<p>Amplifier chips exceeding this limit will not appear in the GUI.", 0,
+                       usb3 ? 512 : 256));
         }
     }
 
     // Reconfigure USB data streams in consecutive order to accommodate all connected chips.
     stream = 0;
-    for (int oldStream = 0; oldStream < MAX_NUM_DATA_STREAMS; ++oldStream) {
-        if ((chipIdOld[oldStream] == CHIP_ID_RHD2216) && (stream < MAX_NUM_DATA_STREAMS)) {
+    for (int oldStream = 0; oldStream < MAX_NUM_HEADSTAGES; ++oldStream) {
+        if ((chipIdOld[oldStream] == CHIP_ID_RHD2216) && (stream < MAX_NUM_DATA_STREAMS(usb3))) {
             chipId[stream] = CHIP_ID_RHD2216;
             portIndex[stream] = portIndexOld[oldStream];
             if (!synthMode) {
@@ -2217,7 +2171,7 @@ void MainWindow::findConnectedAmplifiers()
                 evalBoard->setDataSource(stream, initStreamPorts[oldStream]);
             }
             stream++;
-        } else if ((chipIdOld[oldStream] == CHIP_ID_RHD2132) && (stream < MAX_NUM_DATA_STREAMS)) {
+        } else if ((chipIdOld[oldStream] == CHIP_ID_RHD2132) && (stream < MAX_NUM_DATA_STREAMS(usb3))) {
             chipId[stream] = CHIP_ID_RHD2132;
             portIndex[stream] = portIndexOld[oldStream];
             if (!synthMode) {
@@ -2225,7 +2179,7 @@ void MainWindow::findConnectedAmplifiers()
                 evalBoard->setDataSource(stream, initStreamPorts[oldStream]);
             }
             stream++ ;
-        } else if ((chipIdOld[oldStream] == CHIP_ID_RHD2164) && (stream < MAX_NUM_DATA_STREAMS - 1)) {
+        } else if ((chipIdOld[oldStream] == CHIP_ID_RHD2164) && (stream < MAX_NUM_DATA_STREAMS(usb3) - 1)) {
             chipId[stream] = CHIP_ID_RHD2164;
             chipId[stream + 1] =  CHIP_ID_RHD2164_B;
             portIndex[stream] = portIndexOld[oldStream];
@@ -2241,7 +2195,7 @@ void MainWindow::findConnectedAmplifiers()
     }
 
     // Disable unused data streams.
-    for (; stream < MAX_NUM_DATA_STREAMS; ++stream) {
+    for (; stream < MAX_NUM_DATA_STREAMS(usb3); ++stream) {
         if (!synthMode) {
             evalBoard->enableDataStream(stream, false);
         }
@@ -2257,8 +2211,9 @@ void MainWindow::findConnectedAmplifiers()
             signalSources->signalPort[port].channel.clear();  // ...clear existing channels...
             // ...and create new ones.
             channel = 0;
+            
             // Create amplifier channels for each chip.
-            for (stream = 0; stream < MAX_NUM_DATA_STREAMS; ++stream) {
+            for (stream = 0; stream < MAX_NUM_DATA_STREAMS(usb3); ++stream) {
                 if (portIndex[stream] == port) {
                     if (chipId[stream] == CHIP_ID_RHD2216) {
                         for (i = 0; i < 16; ++i) {
@@ -2282,7 +2237,7 @@ void MainWindow::findConnectedAmplifiers()
             // Now create auxiliary input channels and supply voltage channels for each chip.
             auxName = 1;
             vddName = 1;
-            for (stream = 0; stream < MAX_NUM_DATA_STREAMS; ++stream) {
+            for (stream = 0; stream < MAX_NUM_DATA_STREAMS(usb3); ++stream) {
                 if (portIndex[stream] == port) {
                     if (chipId[stream] == CHIP_ID_RHD2216 ||
                             chipId[stream] == CHIP_ID_RHD2132 ||
@@ -2295,11 +2250,11 @@ void MainWindow::findConnectedAmplifiers()
                 }
             }
         } else {    // If number of channels on port has not changed, don't create new channels (since this
-                    // would clear all user-defined channel names.  But we must update the data stream indices
-                    // on the port.
+                    // would clear all user-defined channel names.  But we must update the data stream 
+                    // indices on the port.
             channel = 0;
             // Update stream indices for amplifier channels.
-            for (stream = 0; stream < MAX_NUM_DATA_STREAMS; ++stream) {
+            for (stream = 0; stream < MAX_NUM_DATA_STREAMS(usb3); ++stream) {
                 if (portIndex[stream] == port) {
                     if (chipId[stream] == CHIP_ID_RHD2216) {
                         for (i = channel; i < channel + 16; ++i) {
@@ -2325,7 +2280,7 @@ void MainWindow::findConnectedAmplifiers()
                 }
             }
             // Update stream indices for auxiliary channels and supply voltage channels.
-            for (stream = 0; stream < MAX_NUM_DATA_STREAMS; ++stream) {
+            for (stream = 0; stream < MAX_NUM_DATA_STREAMS(usb3); ++stream) {
                 if (portIndex[stream] == port) {
                     if (chipId[stream] == CHIP_ID_RHD2216 ||
                             chipId[stream] == CHIP_ID_RHD2132 ||
@@ -2341,7 +2296,6 @@ void MainWindow::findConnectedAmplifiers()
     }
 
     // Update Port A-D radio buttons in GUI
-
     if (signalSources->signalPort[0].numAmplifierChannels() == 0) {
         signalSources->signalPort[0].enabled = false;
         displayPortAButton->setEnabled(false);
@@ -2405,11 +2359,10 @@ void MainWindow::findConnectedAmplifiers()
     // Return sample rate to original user-selected value.
     changeSampleRate(sampleRateComboBox->currentIndex());
 
-//    signalSources->signalPort[0].print();
-//    signalSources->signalPort[1].print();
-//    signalSources->signalPort[2].print();
-//    signalSources->signalPort[3].print();
-
+    //signalSources->signalPort[0].print();
+    //signalSources->signalPort[1].print();
+    //signalSources->signalPort[2].print();
+    //signalSources->signalPort[3].print();
 }
 
 // Return the Intan chip ID stored in ROM register 63.  If the data is invalid
@@ -3549,7 +3502,7 @@ void MainWindow::runImpedanceMeasurement()
     queue<Rhd2000DataBlock> bufferQueue;    // dummy reference variable; not used
 
     bool rhd2164ChipPresent = false;
-    for (stream = 0; stream < MAX_NUM_DATA_STREAMS; ++stream) {
+    for (stream = 0; stream < MAX_NUM_DATA_STREAMS(usb3); ++stream) {
         if (chipId[stream] == CHIP_ID_RHD2164_B) {
             rhd2164ChipPresent = true;
         }
