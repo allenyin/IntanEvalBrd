@@ -121,7 +121,8 @@ MainWindow::MainWindow()
     }
     chipId.resize(MAX_NUM_DATA_STREAMS(usb3));  
     chipId.fill(-1);
-
+    
+    cout << "signalProcessor init" << endl;
     // signalProcessor init
     signalProcessor = new SignalProcessor(usb3);
     notchFilterFrequency = 60.0;
@@ -132,6 +133,7 @@ MainWindow::MainWindow()
     highpassFilterEnabled = false;
     signalProcessor->setHighpassFilterEnabled(highpassFilterEnabled);
 
+    cout << "Parameters init" << endl;
     // Client state  parameters
     running = false;
     recording = false;
@@ -142,9 +144,9 @@ MainWindow::MainWindow()
     saveTemp = false;
     saveTtlOut = false;
     validFilename = false;
-    synthMode = false;
     fastSettleEnabled = false;
-    
+   
+    cout << "Plotting init" << endl; 
     // Plotting init
     wavePlot = new WavePlot(signalProcessor, signalSources, this, usb3, this);
     connect(wavePlot, SIGNAL(selectedChannelChanged(SignalChannel*)),
@@ -164,7 +166,9 @@ MainWindow::MainWindow()
     manualDelay.resize(4);
     manualDelay.fill(0);
 
-    initInterfaceBoard();   
+    if (!synthMode) {
+        initInterfaceBoard();   
+    }
 
     changeSampleRate(sampleRateComboBox->currentIndex());
     sampleRateComboBox->setCurrentIndex(14);
@@ -2602,12 +2606,12 @@ void MainWindow::runInterfaceBoard()
     }
 
     unsigned int dataBlockSize;
-    Rhd2000DataBlock *dataBlock = new Rhd2000DataBlock(evalBoard->getNumEnabledDataStreams(), usb3);
+    //Rhd2000DataBlock *dataBlock = new Rhd2000DataBlock(evalBoard->getNumEnabledDataStreams(), usb3);
     if (synthMode) {
         // 1 stream
         dataBlockSize = Rhd2000DataBlock::calculateDataBlockSizeInWords(1, usb3);
     } else {
-        dataBlockSize = dataBlock->calculateDataBlockSizeInWords(evalBoard->getNumEnabledDataStreams(), usb3);
+        dataBlockSize = Rhd2000DataBlock::calculateDataBlockSizeInWords(evalBoard->getNumEnabledDataStreams(), usb3);
     }
 
     unsigned int wordsInFifo;
@@ -2641,9 +2645,11 @@ void MainWindow::runInterfaceBoard()
         timer.start();
     }
 
-    evalBoard->resetTimer();
-    evalBoard->resetGlitchCount();
-    evalBoard->resetTotalByteCount();
+    if (!synthMode) {
+        evalBoard->resetTimer();
+        evalBoard->resetGlitchCount();
+        evalBoard->resetTotalByteCount();
+    }
 
     //int readDataBlocksCounter = 0;
     while (running) {

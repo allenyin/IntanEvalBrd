@@ -109,7 +109,7 @@ int Rhd2000EvalBoard::open()
     okCFrontPanel::ErrorCode result = dev->OpenBySerial(serialNumber);
     // Attempt to open device.
     if (result != okCFrontPanel::NoError) {
-        delete dev;
+        //delete dev;
         cerr << "Device could not be opened.  Is one connected?" << endl;
         cerr << "Error = " << result << "\n";
         return -2;
