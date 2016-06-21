@@ -122,6 +122,8 @@ MainWindow::MainWindow()
     }
     chipId.resize(MAX_NUM_DATA_STREAMS(usb3));  
     chipId.fill(-1);
+    portIndex.resize(MAX_NUM_DATA_STREAMS(usb3));
+    portIndex.fill(-1);
     
     cout << "signalProcessor init" << endl;
     // signalProcessor init
@@ -1846,6 +1848,7 @@ void MainWindow::initInterfaceBoard()
     evalBoard->setContinuousRunMode(false);
 
     // Start SPI interface.
+    evalBoard->updateBTBlockSize();
     evalBoard->run();
 
     // Wait for the 60-sample or 64-sample run to complete.
@@ -1958,14 +1961,13 @@ void MainWindow::findConnectedAmplifiers()
     int delay, stream, hs, id, i, channel, port, auxName, vddName;
     int register59Value;
     int numChannelsOnPort[4] = {0, 0, 0, 0};
-    QVector<int> portIndex, portIndexOld, chipIdOld;
+    QVector<int> portIndexOld, chipIdOld;
 
     // portIndex: holds which port each of the possible streams belong to.
     // portIndexOld: holds which port each of the MAX_NUM_HEADSTAGES primary streams belong to.
     // chipId: holds chipId for all streams (-1 if none), include both primary and DDR streams.
     // chipIdOld: holds chipId for MAX_NUM_HEADSTAGES primary streams.
 
-    portIndex.resize(MAX_NUM_DATA_STREAMS(usb3));
     portIndexOld.resize(MAX_NUM_HEADSTAGES);
     chipIdOld.resize(MAX_NUM_HEADSTAGES);
 
@@ -2042,6 +2044,7 @@ void MainWindow::findConnectedAmplifiers()
             evalBoard->setCableDelay(Rhd2000EvalBoard::PortD, delay);
 
             // Start SPI interface.
+            evalBoard->updateBTBlockSize();
             evalBoard->run();
 
             // Wait for the run to complete.
@@ -2368,6 +2371,17 @@ void MainWindow::findConnectedAmplifiers()
     //signalSources->signalPort[1].print();
     //signalSources->signalPort[2].print();
     //signalSources->signalPort[3].print();
+   
+    cout << "End of findConnectedAmplifiers(): portIndex=[";
+    for (i = 0; i < portIndex.size(); ++i) {
+        cout << portIndex[i] << ", ";
+    }
+    cout << "]" << endl;
+    cout << "                                  chipId=[";
+    for (i = 0; i < chipId.size(); ++i) {
+        cout << chipId[i] << ", ";
+    }
+    cout << "]" << endl;
 }
 
 // Return the Intan chip ID stored in ROM register 63.  If the data is invalid
@@ -2641,21 +2655,18 @@ void MainWindow::runInterfaceBoard()
 
     if (!synthMode) {
         evalBoard->setContinuousRunMode(true);
+        evalBoard->updateBTBlockSize();
         evalBoard->run();
-    } else {
-        timer.start();
-    }
-
-    if (!synthMode) {
         evalBoard->resetTimer();
         evalBoard->resetGlitchCount();
         evalBoard->resetTotalByteCount();
+        printf("Real acquisition starts\n");
+
+    } else {
+        printf("Synthetic mode\n");
+        timer.start();
     }
     
-    if (synthMode == true) printf("Before running, synthMode is true\n");
-    if (synthMode == false) printf("Before running, synthMode is false\n");
-
-    //int readDataBlocksCounter = 0;
     while (running) {
         // If we are running in demo mode, use a timer to periodically generate more synthetic
         // data.  If not, wait for a certain amount of data to be ready from the USB interface board.
@@ -2664,13 +2675,10 @@ void MainWindow::runInterfaceBoard()
                             ((int) (1000.0 * 60.0 * (double) numUsbBlocksToRead / boardSampleRate)));
         } else {
             newDataReady = evalBoard->readDataBlocks(numUsbBlocksToRead, dataQueue);    // takes about 17 ms at 30 kS/s with 256 amplifiers
-            //readDataBlocksCounter++;
         }
-        //cout << "readDataBlocksCounter=" << readDataBlocksCounter << endl;
 
         // If new data is ready, then read it.
         if (newDataReady) {
-            // statusBarLabel->setText("Running.  Extra CPU cycles: " + QString::number(extraCycles));
 
             if (synthMode) {
                 cout << "synthetic data" << endl;
@@ -2852,7 +2860,7 @@ void MainWindow::runInterfaceBoard()
         evalBoard->setContinuousRunMode(false);
         evalBoard->setMaxTimeStep(0);
 
-        // Flush USB FIFO on XEM6010
+        // Flush USB FIFO 
         evalBoard->flush();
     }
 
@@ -2865,6 +2873,7 @@ void MainWindow::runInterfaceBoard()
             evalBoard->enableExternalDigOut(Rhd2000EvalBoard::PortC, false);
             evalBoard->enableExternalDigOut(Rhd2000EvalBoard::PortD, false);
             evalBoard->setMaxTimeStep(60);
+            evalBoard->updateBTBlockSize();
             evalBoard->run();
             // Wait for the 60-sample run to complete.
             while (evalBoard->isRunning()) {
@@ -3643,6 +3652,7 @@ void MainWindow::runImpedanceMeasurement()
             // Upload version with no ADC calibration to AuxCmd3 RAM Bank 1.
             evalBoard->uploadCommandList(commandList, Rhd2000EvalBoard::AuxCmd3, 3);
 
+            evalBoard->updateBTBlockSize();
             evalBoard->run();
             while (evalBoard->isRunning() ) {
                 qApp->processEvents();
@@ -3667,6 +3677,7 @@ void MainWindow::runImpedanceMeasurement()
                 // Upload version with no ADC calibration to AuxCmd3 RAM Bank 1.
                 evalBoard->uploadCommandList(commandList, Rhd2000EvalBoard::AuxCmd3, 3);
 
+                evalBoard->updateBTBlockSize();
                 evalBoard->run();
                 while (evalBoard->isRunning() ) {
                     qApp->processEvents();

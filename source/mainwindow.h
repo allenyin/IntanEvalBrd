@@ -367,7 +367,9 @@ private:
     QLabel *dacGainLabel;
     QLabel *dacNoiseSuppressLabel;
 
-    bool usb3;  // convenient placeholder for board type
+    // Additions to Rhythm
+    bool usb3;              // convenient placeholder for board type
+    QVector<int> portIndex; // Keeps track of which port each of the possible streams belong to
 };
 
 #endif // MAINWINDOW_H

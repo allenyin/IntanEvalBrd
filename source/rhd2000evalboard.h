@@ -21,13 +21,16 @@
 #ifndef RHD2000EVALBOARD_H
 #define RHD2000EVALBOARD_H
 
-#define USB_BUFFER_SIZE 2400000
+#define USB_BUFFER_SIZE 2400256 //2400000 // In bytes
 #define RHYTHM_BOARD_ID 500
 #define MAX_NUM_DATA_STREAMS_USB2 8
 #define MAX_NUM_DATA_STREAMS_USB3 16
-#define FIFO_CAPACITY_WORDS 67108864
-#define BLOCK_SIZE_USB3 512 // 512 bytes block-throttled pipe size. Default arg for constructor 
+#define FIFO_CAPACITY_WORDS 67108864 // Units of 16-bit words
+#define BLOCK_SIZE_USB3_256CH 512  // 512 bytes block-throttled pipe size. Default arg for constructor 
+#define BLOCK_SIZE_USB3_512CH 1024 // bytes
 #define MAX_NUM_DATA_STREAMS(usb3) (usb3 ? MAX_NUM_DATA_STREAMS_USB3 : MAX_NUM_DATA_STREAMS_USB2)
+#define BURST_LEN_TRANSFER 32 // BURST_LEN=32 when transfering data
+#define BURST_LEN_FLUSH     2 // BURST_LEN=2 when flushing
 
 #include <queue>
 //#include "okFrontPanelDLL.h"
@@ -50,7 +53,7 @@ class Rhd2000EvalBoard
 {
 
 public:
-    Rhd2000EvalBoard(int blockSize=BLOCK_SIZE_USB3);
+    Rhd2000EvalBoard(unsigned int blockSize=BLOCK_SIZE_USB3_256CH);
     ~Rhd2000EvalBoard();
 
     int open();
@@ -175,6 +178,14 @@ public:
     void resetGlitchCount();
     void resetTotalByteCount();
     bool isStreamEnabled(int streamIndex);
+    void setDDRBurstLen(unsigned int burstlen);
+    unsigned int getDDRBurstLen();
+    unsigned int getFPGABurstLen();
+    void setBTBlockSize(unsigned int blockSize);
+    unsigned int getBTBlockSize();
+    unsigned int getFPGABTBlockSize();
+    void updateBTBlockSize();
+    void printFIFOmetrics();
     
 private:
     okCFrontPanel *dev;
@@ -219,7 +230,7 @@ private:
         WireInDacSource7 = 0x1c,
         WireInDacSource8 = 0x1d,
         WireInDacManual = 0x1e,
-        WireInMultiUse = 0x1f,
+        WireInMultiUse = 0x1f,  // See source file for usages.
 
         TrigInDcmProg = 0x40,
         TrigInSpiStart = 0x41,
@@ -228,6 +239,8 @@ private:
         TrigInDacHpf = 0x44,
         TrigInExtFastSettle = 0x45,
         TrigInExtDigOut = 0x46,
+        TrigInSetParam = 0x47,      // used to set new BTBlockSize or BURST_LEN.
+                                    // bit 0 is blockSize, bit 1 is BURST_LEN
 
         WireOutNumWordsLsb = 0x20,
         WireOutNumWordsMsb = 0x21,
@@ -237,6 +250,11 @@ private:
         WireOutBoardMode = 0x25,
         WireOutBoardId = 0x3e,
         WireOutBoardVersion = 0x3f,
+        WireOutBlockSize = 0x26,        // FPGA's value of blocksize
+        WireOutDDRBurstLen = 0x27,      // FPGA's value of ddr BURST_LEN
+        WireOutInputFIFOWords = 0x28,   // Number of 16-bit words in input FIFO
+        WireOutOutputFIFOWords = 0x29,  // Numer of 16-bit words in output FIFO
+        WireOutSDRAMWords = 0x2a,       // Number of 16-bit words in SDRAM
 
         PipeOutData = 0xa0
     };
@@ -251,7 +269,8 @@ private:
     
     // Additions for USB3
     bool usb3;
-    int BTblockSize; // throttld pipe blockSize in bytes, relevant if isUSB3=true
+    unsigned int BTBlockSize;   // throttld pipe blockSize in bytes, relevant if isUSB3=true
+    unsigned int ddr_burst_len; // num of 32-bit words transfer per SDRAM read/write
     unsigned int glitchCounter; // profiling glitch occurences
     chrono::time_point<chrono::steady_clock> startTime;
     bool printFailedErrorCode(long errorCode);

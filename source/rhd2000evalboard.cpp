@@ -24,6 +24,7 @@
 #include <vector>
 #include <queue>
 #include <cmath>
+#include <unistd.h>
 
 #include "rhd2000evalboard.h"
 #include "rhd2000datablock.h"
@@ -36,13 +37,16 @@ using namespace std;
 // interface board running the Rhythm interface Verilog code.
 
 // Constructor.  Set sampling rate variable to 30.0 kS/s/channel (FPGA default).
-Rhd2000EvalBoard::Rhd2000EvalBoard(int blockSize)
+Rhd2000EvalBoard::Rhd2000EvalBoard(unsigned int blockSize)
 {
     sampleRate = SampleRate30000Hz; // Rhythm FPGA boots up with 30.0 kS/s/channel sampling rate
     numDataStreams = 0;
     dev = 0;
-    usb3 = false;                 
-    BTblockSize = blockSize;
+    usb3 = false;
+
+    // BTblockSize and ddr_burst_len place holder, takes effect in resetBoard()
+    BTBlockSize = blockSize;            
+    ddr_burst_len = BURST_LEN_TRANSFER;
 
     for (int i = 0; i < MAX_NUM_DATA_STREAMS(usb3); ++i) {
         dataStreamEnabled[i] = 0;
@@ -110,6 +114,7 @@ int Rhd2000EvalBoard::open()
     // Attempt to open device.
     if (result != okCFrontPanel::NoError) {
         //delete dev;
+        usb3 = false;
         cerr << "Device could not be opened.  Is one connected?" << endl;
         cerr << "Error = " << result << "\n";
         return -2;
@@ -678,27 +683,30 @@ void Rhd2000EvalBoard::selectAuxCommandLength(AuxCmdSlot auxCommandSlot, int loo
 // Reset FPGA.  This clears all auxiliary command RAM banks, clears the USB FIFO, and resets the
 // per-channel sampling rate to 30.0 kS/s/ch.
 void Rhd2000EvalBoard::resetBoard()
-{
+{   
+    cout << "Resetting Board..." << endl;
     dev->SetWireInValue(WireInResetRun, 0x01, 0x01);
     dev->UpdateWireIns();
     dev->SetWireInValue(WireInResetRun, 0x00, 0x01);
     dev->UpdateWireIns();
+    if (usb3) {
+        setBTBlockSize(BTBlockSize);
+        setDDRBurstLen(ddr_burst_len);
+    }
 }
 
 // Set the FPGA to run continuously once started (if continuousMode == true) or to run until
 // maxTimeStep is reached (if continuousMode == false).
 void Rhd2000EvalBoard::setContinuousRunMode(bool continuousMode)
 {
-    long res;
     if (continuousMode) {
         printf("Turning on continousMode\n");
-        res = dev->SetWireInValue(WireInResetRun, 0x02, 0x02);
+        dev->SetWireInValue(WireInResetRun, 0x02, 0x02);
     } else {
         printf("Turning off continuousMode\n");
-        res = dev->SetWireInValue(WireInResetRun, 0x00, 0x02);
+        dev->SetWireInValue(WireInResetRun, 0x00, 0x02);
     }
     dev->UpdateWireIns();
-    //cout << "setContinousRunMode: res=" << res << endl;
 }
 
 // Set maxTimeStep for cases where continuousMode == false.
@@ -866,7 +874,6 @@ void Rhd2000EvalBoard::setDataSource(int stream, BoardDataSource dataSource)
     int bitShift;
     OkEndPoint endPoint;
 
-    //cout << "Rhd2000EvalBoard::setDataSource: usb3=" << usb3 << endl;
     if (stream < 0 || stream > (MAX_NUM_DATA_STREAMS(usb3) - 1)) {
         cerr << "Error in Rhd2000EvalBoard::setDataSource: stream=" << stream << " out of range.";
         cerr << "MAX_NUM_DATA_STREAMS=" << MAX_NUM_DATA_STREAMS(usb3) << endl;
@@ -1378,48 +1385,61 @@ bool Rhd2000EvalBoard::isDataClockLocked() const
 // data acquisition has been stopped.)
 void Rhd2000EvalBoard::flush()
 {
-    cout << "Flushing FIFO contents: " << numWordsInFifo() << " 16-bits words" << endl;
     long errorCode;
     unsigned int bytesToFlush;
-    while (numWordsInFifo() >= USB_BUFFER_SIZE / 2) {
-        if (usb3) {
-            errorCode = dev->ReadFromBlockPipeOut(PipeOutData, BTblockSize, USB_BUFFER_SIZE, usbBuffer); 
+    cout << "\nFlushing onboard FIFO" << endl;
+    if (usb3) {
+        bytesToFlush = 2 * numWordsInFifo();
+        printf("Preflush, %d bytes\n", bytesToFlush);
+        while (bytesToFlush >= USB_BUFFER_SIZE / 2) {
+            errorCode = dev->ReadFromBlockPipeOut(PipeOutData, BTBlockSize, USB_BUFFER_SIZE, usbBuffer);
+            if (!printFailedErrorCode(errorCode)) {
+                printf("Flush step 1, %d bytes flushed, ", USB_BUFFER_SIZE);
+            } 
+            bytesToFlush = 2 * numWordsInFifo();
+            printf(" %d bytes left\n", bytesToFlush);
+            printFIFOmetrics();
+        }
+      
+        if (bytesToFlush > 0) {
+           // Override pipeout block throttle, would also make burst_len=2
+            printf("Flush step 2: %d bytes left, overriding block throttle and BURST_LEN\n", bytesToFlush); 
+            dev->SetWireInValue(WireInResetRun, 1<<4, 1<<4);    
+            dev->UpdateWireIns();
+            printf("    BTBlockSize=%d bytes, burst_len=%d\n", getFPGABTBlockSize()*4, getFPGABurstLen());
+            while (bytesToFlush > 0) {
+                bytesToFlush = max((bytesToFlush/BTBlockSize), (unsigned int)1) * BTBlockSize;
+                errorCode = dev->ReadFromBlockPipeOut(PipeOutData, BTBlockSize, bytesToFlush, usbBuffer);
+                if (!printFailedErrorCode(errorCode)) {
+                    printf("Flush step 2, %d bytes flushed, ", bytesToFlush);
+                } 
+                bytesToFlush = 2 * numWordsInFifo();
+                printf(" %d bytes left\n", bytesToFlush);
+                dev->UpdateWireOuts();
+                printFIFOmetrics();
+            }
+            printf("Finished flushing, USB3 Restoring block throttle and BURST_LEN\n\n");
+            dev->SetWireInValue(WireInResetRun, 0, 1<<4);
+            dev->UpdateWireIns();
         } else {
-            errorCode = dev->ReadFromPipeOut(PipeOutData, USB_BUFFER_SIZE, usbBuffer);
+            printf("Finished flushing\n\n");
         }
-        if (!printFailedErrorCode(errorCode)) {
-            printf("Flushed %d words\n", USB_BUFFER_SIZE/2);
-        }
-    }
-
-    if (numWordsInFifo() > 0) {
-        // clean up smaller number of words
-        if (usb3) {
-            // TODO: Change burst-length while flushing
-            dev->SetWireInValue(WireInResetRun, 1<<4, 1<<4); // Override pipeout block throttle
-            dev->UpdateWireIns();
-            while (numWordsInFifo() > 0) {
-                bytesToFlush = 2*numWordsInFifo();
-                errorCode = dev->ReadFromBlockPipeOut(PipeOutData, BTblockSize, 
-                                              BTblockSize * max(bytesToFlush/BTblockSize, (unsigned int)1),
-                                              usbBuffer);
-                if (!printFailedErrorCode(errorCode)) {
-                    printf("Flushed %d bytes\n", bytesToFlush);
-                }
-            }
-            dev->SetWireInValue(WireInResetRun, 0, 1<<4);   // Disable pipeout block throttle override.
-            dev->UpdateWireIns();
-        }
-        else {
-            while (numWordsInFifo() > 0) {
-                bytesToFlush = 2*numWordsInFifo();
-                errorCode = dev->ReadFromPipeOut(PipeOutData, bytesToFlush, usbBuffer);
-                if (!printFailedErrorCode(errorCode)) {
-                    printf("Flushed %d bytes\n", bytesToFlush);
-                }
+    } else {
+        cout << "Pre-Flush: " << numWordsInFifo() << " 16-bit words" << endl;
+        while (numWordsInFifo() >= USB_BUFFER_SIZE / 2) {
+			errorCode = dev->ReadFromPipeOut(PipeOutData, USB_BUFFER_SIZE, usbBuffer);
+            if (!printFailedErrorCode(errorCode)) {
+                cout << "Flush step 1: Flushed " << USB_BUFFER_SIZE/2 << " words" << endl;
             }
         }
-    }
+		while (numWordsInFifo() > 0) {
+            bytesToFlush = 2 * numWordsInFifo();
+			errorCode = dev->ReadFromPipeOut(PipeOutData, bytesToFlush, usbBuffer);
+            if (!printFailedErrorCode(errorCode)) {
+                cout << "Flush step 2: Flushed " << bytesToFlush << " bytes" << endl;
+            }
+		}
+	}
 }
 
 // Read data block from the USB interface, if one is available.  Returns true if data block
@@ -1439,8 +1459,8 @@ bool Rhd2000EvalBoard::readDataBlock(Rhd2000DataBlock *dataBlock, int nSamples)
     }
 
     if (usb3) {
-        printf("readDataBlock: USB3 block pipe read: blockSize=%d bytes\n", BTblockSize);
-        res = dev->ReadFromBlockPipeOut(PipeOutData, BTblockSize, numBytesToRead, usbBuffer);
+        printf("readDataBlock: USB3 block pipe read: blockSize=%d bytes\n", BTBlockSize);
+        res = dev->ReadFromBlockPipeOut(PipeOutData, BTBlockSize, numBytesToRead, usbBuffer);
     } else {
         res = dev->ReadFromPipeOut(PipeOutData, numBytesToRead, usbBuffer);
     }
@@ -1462,9 +1482,9 @@ bool Rhd2000EvalBoard::readDataBlocks(int numBlocks, queue<Rhd2000DataBlock> &da
     Rhd2000DataBlock *dataBlock;
     numWordsToRead = numBlocks * dataBlock->calculateDataBlockSizeInWords(numDataStreams, usb3);
     
-    if ( usb3 && ((numWordsToRead*2) % BTblockSize != 0)) {
+    if ( usb3 && ((numWordsToRead*2) % BTBlockSize != 0)) {
        cerr << "Error in Rhd2000EvalBoard::readDataBlocks: Requested read size is not divisible by\
-                BTPipe blocksize! BTblockSize=" << BTblockSize << "bytes" << endl;
+                BTPipe blocksize! BTblockSize=" << BTBlockSize << "bytes" << endl;
        return false; 
     }
 
@@ -1480,7 +1500,7 @@ bool Rhd2000EvalBoard::readDataBlocks(int numBlocks, queue<Rhd2000DataBlock> &da
     }
 
     if (usb3) {
-        res = dev->ReadFromBlockPipeOut(PipeOutData, BTblockSize, numBytesToRead, usbBuffer);
+        res = dev->ReadFromBlockPipeOut(PipeOutData, BTBlockSize, numBytesToRead, usbBuffer);
     } else {
         res = dev->ReadFromPipeOut(PipeOutData, numBytesToRead, usbBuffer);
     }
@@ -1532,9 +1552,9 @@ bool Rhd2000EvalBoard::readDataBlocks(int numBlocks, queue<Rhd2000DataBlock> &da
     unsigned int samplesPerDataBlock = dataBlock->getSamplesPerDataBlock(usb3); 
     unsigned int dataBlockSizeInBytes = 2 * dataBlock->calculateDataBlockSizeInWords(numDataStreams, usb3);
     unsigned int sampleSizeInBytes = dataBlockSizeInBytes / samplesPerDataBlock; 
-    int sample;
-    int index = 0;
-    int lag;
+    unsigned int sample;
+    unsigned int index = 0;
+    unsigned int lag;
     for (sample = 0; sample < numBlocks * samplesPerDataBlock; ++sample) {
         if (!(dataBlock->checkUsbHeader(usbBuffer, index))) {
             glitchCounter++;
@@ -1569,7 +1589,7 @@ bool Rhd2000EvalBoard::readDataBlocks(int numBlocks, queue<Rhd2000DataBlock> &da
 //----------------------------------------------------------------------------------------------
 
     // Re-check USB headers (for debugging purposes only)
-    
+    /*    
     index = 0;
     for (sample = 0; sample < numBlocks * samplesPerDataBlock; ++sample) {
         if (!(dataBlock->checkUsbHeader(usbBuffer, index))) {
@@ -1577,6 +1597,7 @@ bool Rhd2000EvalBoard::readDataBlocks(int numBlocks, queue<Rhd2000DataBlock> &da
         }
         index += sampleSizeInBytes;
     }
+    */
     
 
     // End of USB error checking added for version 1.5
@@ -1799,4 +1820,84 @@ bool Rhd2000EvalBoard::isStreamEnabled(int streamIndex) {
         return false;
     }
     return dataStreamEnabled[streamIndex];
+}
+
+// Update FPGA's ddr BURST_LEN, also object state. Cannot be ran when FPGA is running
+void Rhd2000EvalBoard::setDDRBurstLen(unsigned int burstlen) {
+    if (isRunning()) {
+        cerr << "Rhd2000EvalBoard::setDDRBurstLen: Cannot update burstLen when FPGA is running, operation aborted!" << endl;
+        return;
+    }
+    if ((burstlen % 2 != 0) || (burstlen <= 0)) {
+        cerr << "Rhd2000EvalBoard::setDDRBurstLen: burst length must be multiples of 2, operation aborted!" << endl;
+        return;
+    }
+    dev->SetWireInValue(WireInMultiUse, burstlen);
+    dev->UpdateWireIns();
+    dev->ActivateTriggerIn(TrigInSetParam, 1);
+    cout << "DDR BURST_LEN set to " << burstlen << endl;
+}
+
+unsigned int Rhd2000EvalBoard::getDDRBurstLen() {
+    unsigned int FPGABurstLen = getFPGABurstLen();
+    if (ddr_burst_len != FPGABurstLen) {
+        printf("Rhd2000EvalBoard::getDDRBurstLen: FPGA has BURST_LEN=%d, evalBoard has %d", FPGABurstLen, ddr_burst_len);
+    }
+    return ddr_burst_len;
+}
+
+unsigned int Rhd2000EvalBoard::getFPGABurstLen() {
+    dev->UpdateWireOuts();
+    return (unsigned int)(dev->GetWireOutValue(0x27));
+}
+
+// Update FPGA's throttled pipeout's block size, and object state. Cannot be ran when FPGA is running.
+void Rhd2000EvalBoard::setBTBlockSize(unsigned int blockSize) {
+    if (isRunning()) {
+        cerr << "Rhd2000EvalBoard::setBTBlockSize: Cannot update blockSize when FPGA is running, operation aborted!" << endl;
+        return;
+    }
+    if ((blockSize <= 16) || ( (blockSize & (-blockSize)) != blockSize)) {
+        cerr << "Rhd2000EvalBoard::setBTBlockSize: blockSize must be power of 2 bytes, operation aborted!" << endl;
+        return;
+    }
+    BTBlockSize = blockSize;
+    dev->SetWireInValue(WireInMultiUse, blockSize / 4);
+    dev->UpdateWireIns();
+    dev->ActivateTriggerIn(TrigInSetParam, 0);
+    cout << "BTBlockSize set to " << blockSize << " bytes" << endl;
+}
+
+unsigned int Rhd2000EvalBoard::getBTBlockSize() {
+    unsigned int FPGABlockSize = getFPGABTBlockSize() * 4;
+    if (BTBlockSize != FPGABlockSize) {
+        printf("Rhd2000EvalBoard::getBTBlockSize: FPGA has blocksize=%d bytes, evalBoard has %d bytes", FPGABlockSize, BTBlockSize);
+    }
+    return BTBlockSize;
+}
+
+// Get blocksize from FPGA
+unsigned int Rhd2000EvalBoard::getFPGABTBlockSize() {
+    dev->UpdateWireOuts();
+    return (unsigned int)(dev->GetWireOutValue(0x26));
+}
+
+// Re-calculate and update FPGA's throttled pipeout's block size, as well as object state, based on
+// number of streams enabled. For USB3 only
+void Rhd2000EvalBoard::updateBTBlockSize() {
+    if (!usb3) return;
+
+    // Under 8 streams use 512 bytes, 1024 bytes from 8 to 16 streams.
+    unsigned int newBTBlockSize = (numDataStreams < 9) ? BLOCK_SIZE_USB3_256CH : BLOCK_SIZE_USB3_512CH;
+    if (newBTBlockSize != BTBlockSize) {
+        printf("Rhd2000EvalBoard::updateBTBlockSize: %d streams enabled, changing BTBlockSize to %d bytes\n", numDataStreams, newBTBlockSize);
+        setBTBlockSize(newBTBlockSize);
+    }
+}
+
+void Rhd2000EvalBoard::printFIFOmetrics() {
+    dev->UpdateWireOuts();
+    printf("    Input FIFO:  %d bytes\n", 2*dev->GetWireOutValue(WireOutInputFIFOWords));
+    printf("    SDRAM:       %d bytes\n", 2*dev->GetWireOutValue(WireOutSDRAMWords));
+    printf("    Output FIFO: %d bytes\n", 2*dev->GetWireOutValue(WireOutOutputFIFOWords));
 }
