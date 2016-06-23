@@ -59,6 +59,8 @@
 #include "rhd2000datablock.h"
 #include "okFrontPanelDLL.h"
 
+#include <unistd.h>
+
 // Main Window of RHD2000 USB interface application.
 
 // Constructor.
@@ -452,7 +454,8 @@ void MainWindow::createLayout()
     notchFilterComboBox->addItem("60 Hz");
     notchFilterComboBox->setCurrentIndex(0);
 
-    connect(runButton, SIGNAL(clicked()), this, SLOT(runInterfaceBoard()));
+    //connect(runButton, SIGNAL(clicked()), this, SLOT(runInterfaceBoard()));
+    connect(runButton, SIGNAL(clicked()), this, SLOT(runInterfaceBoardTest()));
     connect(stopButton, SIGNAL(clicked()), this, SLOT(stopInterfaceBoard()));
     connect(recordButton, SIGNAL(clicked()), this, SLOT(recordInterfaceBoard()));
     connect(triggerButton, SIGNAL(clicked()), this, SLOT(triggerRecordInterfaceBoard()));
@@ -2657,7 +2660,7 @@ void MainWindow::runInterfaceBoard()
         evalBoard->setContinuousRunMode(true);
         evalBoard->updateBTBlockSize();
         evalBoard->run();
-        evalBoard->resetTimer();
+        evalBoard->resetGlitchTimer();
         evalBoard->resetGlitchCount();
         evalBoard->resetTotalByteCount();
         printf("Real acquisition starts\n");
@@ -2861,7 +2864,7 @@ void MainWindow::runInterfaceBoard()
         evalBoard->setMaxTimeStep(0);
 
         // Flush USB FIFO 
-        evalBoard->flush();
+        while (!evalBoard->flush()) { printf("Flush failed, again!\n"); }
     }
 
     // If external control of chip auxiliary output pins was enabled, make sure
@@ -2932,6 +2935,176 @@ void MainWindow::runInterfaceBoard()
     sampleRateComboBox->setEnabled(true);
     setSaveFormatButton->setEnabled(true);
 }
+
+// Run acquisition, no plotting or signal processing to profile USB3 performance
+void MainWindow::runInterfaceBoardTest() 
+{
+    if (synthMode) {
+        printf("Test unavailable in synthMode, will do nothing!\n");
+        return;
+    }
+    running = true;
+
+    // Enable stop button on GUI while running
+    stopButton->setEnabled(true);
+
+    // Disable buttons on GUI while running
+    runButton->setEnabled(false);
+    recordButton->setEnabled(false);
+    triggerButton->setEnabled(false);
+    baseFilenameButton->setEnabled(false);
+    renameChannelButton->setEnabled(false);
+    changeBandwidthButton->setEnabled(false);
+    impedanceFreqSelectButton->setEnabled(false);
+    runImpedanceTestButton->setEnabled(false);
+    scanButton->setEnabled(false);
+    setCableDelayButton->setEnabled(false);
+    digOutButton->setEnabled(false);
+    setSaveFormatButton->setEnabled(false);
+
+    // Turn LEDs on to indicate that data acquisition is running.
+    ttlOut[15] = 1;
+    int ledArray[8] = {1, 0, 0, 0, 0, 0, 0, 0};
+    int ledIndex = 0;
+    if (!synthMode) {
+        evalBoard->setLedDisplay(ledArray);
+        evalBoard->setTtlOut(ttlOut);
+    }
+
+    unsigned int dataBlockSize;
+    dataBlockSize = Rhd2000DataBlock::calculateDataBlockSizeInWords(evalBoard->getNumEnabledDataStreams(), usb3);
+    Rhd2000DataBlock *dataBlock = new Rhd2000DataBlock(evalBoard->getNumEnabledDataStreams(), usb3);
+
+    unsigned int wordsInFifo;
+    double fifoPercentageFull, fifoCapacity, samplePeriod, latency;
+    // time per datablock
+    double recordTimeIncrementSeconds = Rhd2000DataBlock::getSamplesPerDataBlock(usb3) / boardSampleRate; 
+    samplePeriod = 1.0 / boardSampleRate;
+    fifoCapacity = Rhd2000EvalBoard::fifoCapacityInWords();
+
+    evalBoard->updateBTBlockSize();
+    //evalBoard->resetProfile();
+    //evalBoard->setContinuousRunMode(true);
+    //evalBoard->run();
+    printf("Real acquisition starts\n");
+
+    // Have different loop delay values, keep increasing until timePerCall does not decrease anymore
+    unsigned int delay = 90*1000;          // In us, 1000us=1ms
+    unsigned int delayInc = 2000;      // 2ms delay increment
+    unsigned int iterations = 100;    // Number of readDataBlocks we will run
+    unsigned int i;
+    float bestTimePerCall = 100000000.0;  // ms
+    float curTimePerCall =  100000000.0;
+    
+    do {
+        evalBoard->resetProfile();    
+        evalBoard->setContinuousRunMode(true);
+        evalBoard->run();
+        bestTimePerCall = curTimePerCall;
+        printf("Delay=%d ms\n", delay/1000);
+        for (i = 0; i < iterations; ++i) {
+            /* Here we continuously readDataBlock, calculate lag in FIFO, update LED display.
+             * Do nothing with the datablocks and spits out performance
+             * afterwards.
+             */
+            //if (i % 1000 == 0) printf("Call %d\n", i);
+            if (evalBoard->readDataBlock(dataBlock)) {
+                    // Calculate lag
+                    wordsInFifo = evalBoard->numWordsInFifo();
+                    latency = 1000.0 * Rhd2000DataBlock::getSamplesPerDataBlock(usb3) *
+                            (wordsInFifo / dataBlockSize) * samplePeriod;
+                    fifoPercentageFull = 100.0 * wordsInFifo / fifoCapacity;
+
+                    // Update lag display
+                    fifoLagLabel->setText(QString::number(latency, 'f', 0) + " ms");
+                    if (latency > 50.0) {
+                        fifoLagLabel->setStyleSheet("color: red");
+                    } else {
+                        fifoLagLabel->setStyleSheet("color: green");
+                    }
+
+                    fifoFullLabel->setText("(" + QString::number(fifoPercentageFull, 'f', 0) + "% full)");
+                    if (fifoPercentageFull > 75.0) {
+                        fifoFullLabel->setStyleSheet("color: red");
+                    } else {
+                        fifoFullLabel->setStyleSheet("color: black");
+                    }
+                    if (fifoPercentageFull > 98.0) {
+                        printf("fifoPercentageFull=%.2f, aborting!\n", fifoPercentageFull);
+                        // stop acquisition if full
+                        running = false;
+                        evalBoard->setContinuousRunMode(false);
+                        evalBoard->setMaxTimeStep(0);
+                        break;
+                    }
+
+                    // Advance LED display
+                    ledArray[ledIndex] = 0;
+                    ledIndex++;
+                    if (ledIndex == 8) ledIndex = 0;
+                    ledArray[ledIndex] = 1;
+                    evalBoard->setLedDisplay(ledArray);
+            } 
+            qApp->processEvents();
+            usleep(delay);
+        }
+        delay += delayInc;
+        curTimePerCall = evalBoard->printProfileStats();
+        evalBoard->setContinuousRunMode(false);
+        evalBoard->setMaxTimeStep(0);
+        if (!evalBoard->flush()) {
+            printf("Flushing failed, aborted!\n");
+            break;
+        }
+    } while ((bestTimePerCall - curTimePerCall >= delayInc/2000) &&  running);
+    
+    printf("Test with samplesPerDataBlock=%d\n", Rhd2000DataBlock::getSamplesPerDataBlock(usb3));
+    printf("     acq time=%.3fms\n", 1000.0 * Rhd2000DataBlock::getSamplesPerDataBlock(usb3) * samplePeriod);
+    printf("     best timePerCall=%.3fms\n", bestTimePerCall);
+    printf("     best bandwidth=%.3f MB/s\n", (2.0 * dataBlockSize)/(bestTimePerCall * 1e-3)/1e6);
+
+    delete dataBlock;
+
+    // When not running, flush board
+    evalBoard->setContinuousRunMode(false);
+    evalBoard->setMaxTimeStep(0);
+    if (!evalBoard->flush()) {
+        printf("Flush failed...\n");
+    }
+
+    // Turn off LED
+    for (int i = 0; i < 8; ++i) ledArray[i] = 0;
+    ttlOut[15] = 0;
+    evalBoard->setLedDisplay(ledArray);
+    evalBoard->setTtlOut(ttlOut);
+
+    setStatusBarReady();
+
+    // Enable/disable various GUI buttons.
+    runButton->setEnabled(true);
+    recordButton->setEnabled(validFilename);
+    triggerButton->setEnabled(validFilename);
+    stopButton->setEnabled(false);
+
+    baseFilenameButton->setEnabled(true);
+    renameChannelButton->setEnabled(true);
+    changeBandwidthButton->setEnabled(true);
+    impedanceFreqSelectButton->setEnabled(true);
+    runImpedanceTestButton->setEnabled(impedanceFreqValid);
+    scanButton->setEnabled(true);
+    setCableDelayButton->setEnabled(true);
+    digOutButton->setEnabled(true);
+
+    enableChannelButton->setEnabled(true);
+    enableAllButton->setEnabled(true);
+    disableAllButton->setEnabled(true);
+    sampleRateComboBox->setEnabled(true);
+    setSaveFormatButton->setEnabled(true);
+
+    stopInterfaceBoard();
+}
+
+
 
 // Stop SPI data acquisition.
 void MainWindow::stopInterfaceBoard()

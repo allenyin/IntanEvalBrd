@@ -21,7 +21,7 @@
 #ifndef RHD2000EVALBOARD_H
 #define RHD2000EVALBOARD_H
 
-#define USB_BUFFER_SIZE 2400256 //2400000 // In bytes
+#define USB_BUFFER_SIZE  4849664 //2400000 // In bytes
 #define RHYTHM_BOARD_ID 500
 #define MAX_NUM_DATA_STREAMS_USB2 8
 #define MAX_NUM_DATA_STREAMS_USB3 16
@@ -163,7 +163,7 @@ public:
     void setDacThreshold(int dacChannel, int threshold, bool trigPolarity);
     void setTtlMode(int mode);
 
-    void flush();
+    bool flush();
     bool readDataBlock(Rhd2000DataBlock *dataBlock, int nSamples = -1);
     bool readDataBlocks(int numBlocks, queue<Rhd2000DataBlock> &dataQueue);
     int queueToFile(queue<Rhd2000DataBlock> &dataQueue, std::ofstream &saveOut);
@@ -173,7 +173,7 @@ public:
     
     // Added by Allen
     bool isUSB3();
-    void resetTimer();
+    void resetGlitchTimer();
     unsigned int getGlitchCount();
     void resetGlitchCount();
     void resetTotalByteCount();
@@ -186,6 +186,11 @@ public:
     unsigned int getFPGABTBlockSize();
     void updateBTBlockSize();
     void printFIFOmetrics();
+
+    // For profiling
+    void resetProfile();
+    float printProfileStats();
+    void updateProfile(double newTime);
     
 private:
     okCFrontPanel *dev;
@@ -274,9 +279,12 @@ private:
     unsigned int glitchCounter; // profiling glitch occurences
     chrono::time_point<chrono::steady_clock> startTime;
     bool printFailedErrorCode(long errorCode);
-    long totalByteCount;    // how many bytes have we read in so far
+    long totalByteCount;        // how many bytes have we read in so far
 
-
+    float numReadCalls;        // Number of calls to readFromBlockPipeOut through readDataBlock()
+    float timePerCall;         // Time per readFromBlockPipeOut, in ms
+    float elapsedCallTime;
+    chrono::time_point<chrono::steady_clock> callStart;
 };
 
 #endif // RHD2000EVALBOARD_H

@@ -1383,10 +1383,11 @@ bool Rhd2000EvalBoard::isDataClockLocked() const
 
 // Flush all remaining data out of the FIFO.  (This function should only be called when SPI
 // data acquisition has been stopped.)
-void Rhd2000EvalBoard::flush()
+bool Rhd2000EvalBoard::flush()
 {
     long errorCode;
     unsigned int bytesToFlush;
+    int numErrors = 0;
     cout << "\nFlushing onboard FIFO" << endl;
     if (usb3) {
         bytesToFlush = 2 * numWordsInFifo();
@@ -1395,12 +1396,14 @@ void Rhd2000EvalBoard::flush()
             errorCode = dev->ReadFromBlockPipeOut(PipeOutData, BTBlockSize, USB_BUFFER_SIZE, usbBuffer);
             if (!printFailedErrorCode(errorCode)) {
                 printf("Flush step 1, %d bytes flushed, ", USB_BUFFER_SIZE);
-            } 
+            } else numErrors++; 
             bytesToFlush = 2 * numWordsInFifo();
             printf(" %d bytes left\n", bytesToFlush);
             printFIFOmetrics();
+            if (numErrors == 3) return false;
         }
       
+        numErrors = 0;
         if (bytesToFlush > 0) {
            // Override pipeout block throttle, would also make burst_len=2
             printf("Flush step 2: %d bytes left, overriding block throttle and BURST_LEN\n", bytesToFlush); 
@@ -1412,11 +1415,12 @@ void Rhd2000EvalBoard::flush()
                 errorCode = dev->ReadFromBlockPipeOut(PipeOutData, BTBlockSize, bytesToFlush, usbBuffer);
                 if (!printFailedErrorCode(errorCode)) {
                     printf("Flush step 2, %d bytes flushed, ", bytesToFlush);
-                } 
+                } else numErrors++; 
                 bytesToFlush = 2 * numWordsInFifo();
                 printf(" %d bytes left\n", bytesToFlush);
                 dev->UpdateWireOuts();
                 printFIFOmetrics();
+                if (numErrors == 3) return false;
             }
             printf("Finished flushing, USB3 Restoring block throttle and BURST_LEN\n\n");
             dev->SetWireInValue(WireInResetRun, 0, 1<<4);
@@ -1440,6 +1444,7 @@ void Rhd2000EvalBoard::flush()
             }
 		}
 	}
+    return true;
 }
 
 // Read data block from the USB interface, if one is available.  Returns true if data block
@@ -1459,21 +1464,20 @@ bool Rhd2000EvalBoard::readDataBlock(Rhd2000DataBlock *dataBlock, int nSamples)
     }
 
     if (usb3) {
-        printf("readDataBlock: USB3 block pipe read: blockSize=%d bytes\n", BTBlockSize);
+        //printf("readDataBlock: USB3 block pipe read: blockSize=%d bytes\n", BTBlockSize);
+        callStart = chrono::steady_clock::now();
         res = dev->ReadFromBlockPipeOut(PipeOutData, BTBlockSize, numBytesToRead, usbBuffer);
+        elapsedCallTime = chrono::duration<float,milli>(chrono::steady_clock::now()-callStart).count();
+        if (!printFailedErrorCode(res)) updateProfile(elapsedCallTime);
     } else {
         res = dev->ReadFromPipeOut(PipeOutData, numBytesToRead, usbBuffer);
     }
-
-    printFailedErrorCode(res);
-
     
     return dataBlock->fillFromUsbBuffer(usbBuffer, 0, numDataStreams, nSamples);
 }
 
 // Reads a certain number of USB data blocks, if the specified number is available, and appends them
 // to queue.  Returns true if data blocks were available.
-// 
 bool Rhd2000EvalBoard::readDataBlocks(int numBlocks, queue<Rhd2000DataBlock> &dataQueue)
 {
     unsigned int numWordsToRead, numBytesToRead;
@@ -1779,7 +1783,7 @@ bool Rhd2000EvalBoard::isUSB3()
     return usb3;
 }  
 
-void Rhd2000EvalBoard::resetTimer() {
+void Rhd2000EvalBoard::resetGlitchTimer() {
     startTime = chrono::steady_clock::now();
 }
 
@@ -1900,4 +1904,20 @@ void Rhd2000EvalBoard::printFIFOmetrics() {
     printf("    Input FIFO:  %d bytes\n", 2*dev->GetWireOutValue(WireOutInputFIFOWords));
     printf("    SDRAM:       %d bytes\n", 2*dev->GetWireOutValue(WireOutSDRAMWords));
     printf("    Output FIFO: %d bytes\n", 2*dev->GetWireOutValue(WireOutOutputFIFOWords));
+}
+
+void Rhd2000EvalBoard::resetProfile() {
+    numReadCalls = 0.0;
+    timePerCall = 0.0;
+}
+
+float Rhd2000EvalBoard::printProfileStats() {
+    cout << "Total of " << numReadCalls << " calls to ReadFromBlockPipeOut, "
+         << timePerCall << "ms/call" << endl;
+    return timePerCall;
+}
+
+void Rhd2000EvalBoard::updateProfile(double newTime) {
+    timePerCall = (timePerCall * numReadCalls + newTime) / (numReadCalls + 1);
+    numReadCalls++;
 }

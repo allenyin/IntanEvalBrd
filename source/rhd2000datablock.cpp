@@ -165,6 +165,7 @@ bool Rhd2000DataBlock::fillFromUsbBuffer(unsigned char usbBuffer[], int blockInd
         }
         index += 8;
         timeStamp[t] = convertUsbTimeStamp(usbBuffer, index);
+        //cout << "Timestamp=" << timeStamp[t] << endl;
         index += 4;
 
         // Read auxiliary results

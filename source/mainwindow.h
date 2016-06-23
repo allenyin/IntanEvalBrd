@@ -141,6 +141,9 @@ private slots:
     void setDacThreshold6(int threshold);
     void setDacThreshold7(int threshold);
     void setDacThreshold8(int threshold);
+    
+    // added by Allen
+    void runInterfaceBoardTest();
 
 private:
     void createActions();
