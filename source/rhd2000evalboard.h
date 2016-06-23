@@ -29,7 +29,7 @@
 #define BLOCK_SIZE_USB3_256CH 512  // 512 bytes block-throttled pipe size. Default arg for constructor 
 #define BLOCK_SIZE_USB3_512CH 1024 // bytes
 #define MAX_NUM_DATA_STREAMS(usb3) (usb3 ? MAX_NUM_DATA_STREAMS_USB3 : MAX_NUM_DATA_STREAMS_USB2)
-#define BURST_LEN_TRANSFER 32 // BURST_LEN=32 when transfering data
+#define BURST_LEN_TRANSFER 64// BURST_LEN=64 when transfering data
 #define BURST_LEN_FLUSH     2 // BURST_LEN=2 when flushing
 
 #include <queue>
@@ -185,7 +185,7 @@ public:
     unsigned int getBTBlockSize();
     unsigned int getFPGABTBlockSize();
     void updateBTBlockSize();
-    void printFIFOmetrics();
+    unsigned int printFIFOmetrics(unsigned int val=-1) const;
 
     // For profiling
     void resetProfile();
@@ -261,7 +261,8 @@ private:
         WireOutOutputFIFOWords = 0x29,  // Numer of 16-bit words in output FIFO
         WireOutSDRAMWords = 0x2a,       // Number of 16-bit words in SDRAM
 
-        PipeOutData = 0xa0
+        PipeOutData = 0xa0,
+        PipeOutFlush = 0xa1
     };
 
     string opalKellyModelName(int model) const;

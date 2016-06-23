@@ -1383,6 +1383,7 @@ bool Rhd2000EvalBoard::isDataClockLocked() const
 
 // Flush all remaining data out of the FIFO.  (This function should only be called when SPI
 // data acquisition has been stopped.)
+/*
 bool Rhd2000EvalBoard::flush()
 {
     long errorCode;
@@ -1418,7 +1419,6 @@ bool Rhd2000EvalBoard::flush()
                 } else numErrors++; 
                 bytesToFlush = 2 * numWordsInFifo();
                 printf(" %d bytes left\n", bytesToFlush);
-                dev->UpdateWireOuts();
                 printFIFOmetrics();
                 if (numErrors == 3) return false;
             }
@@ -1444,6 +1444,59 @@ bool Rhd2000EvalBoard::flush()
             }
 		}
 	}
+    return true;
+}
+*/
+bool Rhd2000EvalBoard::flush() 
+{
+    long errorCode;
+    unsigned int bytesToFlush;
+    bool override = false;
+    printf("\nFlushing onboard FIFO\n");
+    if (usb3) {
+        bytesToFlush = 2 * numWordsInFifo();
+        printf("Preflush, %d bytes\n", bytesToFlush);
+        if (bytesToFlush == 0) return true;
+        while (bytesToFlush > 0) {
+            if ((bytesToFlush < BTBlockSize) && !override) {
+                printf("USB3 changing BURST_LEN and overriding BTPipe\n");
+                dev->SetWireInValue(WireInResetRun, 1<<4, 1<<4);
+                dev->UpdateWireIns();
+                printf("BURST_LEN=%d\n", getFPGABurstLen());
+                override = true;
+            } else {
+                bytesToFlush = (bytesToFlush >= USB_BUFFER_SIZE) ? USB_BUFFER_SIZE : bytesToFlush;
+                bytesToFlush = max((bytesToFlush/BTBlockSize), (unsigned int)1) * BTBlockSize;
+                errorCode = dev->ReadFromBlockPipeOut(PipeOutData, BTBlockSize, bytesToFlush, usbBuffer);
+            } 
+            if (!printFailedErrorCode(errorCode)) {
+                printf("Flushed %d bytes, ", bytesToFlush);
+                bytesToFlush = 2 * numWordsInFifo();
+                printf("%d bytes left\n", bytesToFlush);
+                printFIFOmetrics();
+            } else return false;
+        }
+        if (override) {
+            printf("Finished flushing, USB3 restoring BURST_LEN and re-enable BTPipe\n\n");
+            dev->SetWireInValue(WireInResetRun, 0, 1<<4);
+            dev->UpdateWireIns();
+        }
+    } else {
+        cout << "Pre-flush: " << numWordsInFifo() << " 16-bit words" << endl;
+        while (numWordsInFifo() >= USB_BUFFER_SIZE / 2) {
+            errorCode = dev->ReadFromPipeOut(PipeOutData, USB_BUFFER_SIZE, usbBuffer);
+            if (!printFailedErrorCode(errorCode)) { 
+                printf("Flush step 1: Flushed %d words\n", USB_BUFFER_SIZE/2);
+            }
+        }
+		while (numWordsInFifo() > 0) {
+            bytesToFlush = 2 * numWordsInFifo();
+			errorCode = dev->ReadFromPipeOut(PipeOutData, bytesToFlush, usbBuffer);
+            if (!printFailedErrorCode(errorCode)) {
+                cout << "Flush step 2: Flushed " << bytesToFlush << " bytes" << endl;
+            }
+		}
+    }
     return true;
 }
 
@@ -1899,11 +1952,21 @@ void Rhd2000EvalBoard::updateBTBlockSize() {
     }
 }
 
-void Rhd2000EvalBoard::printFIFOmetrics() {
+unsigned int Rhd2000EvalBoard::printFIFOmetrics(unsigned int val) const {
     dev->UpdateWireOuts();
     printf("    Input FIFO:  %d bytes\n", 2*dev->GetWireOutValue(WireOutInputFIFOWords));
     printf("    SDRAM:       %d bytes\n", 2*dev->GetWireOutValue(WireOutSDRAMWords));
     printf("    Output FIFO: %d bytes\n", 2*dev->GetWireOutValue(WireOutOutputFIFOWords));
+    switch(val) {
+        case 0:
+            return 2*dev->GetWireOutValue(WireOutInputFIFOWords);
+        case 1:
+            return 2*dev->GetWireOutValue(WireOutSDRAMWords);
+        case 2:
+            return 2*dev->GetWireOutValue(WireOutOutputFIFOWords);
+        default:
+            return 0;
+    }
 }
 
 void Rhd2000EvalBoard::resetProfile() {

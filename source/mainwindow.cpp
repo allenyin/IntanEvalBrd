@@ -2989,7 +2989,7 @@ void MainWindow::runInterfaceBoardTest()
     printf("Real acquisition starts\n");
 
     // Have different loop delay values, keep increasing until timePerCall does not decrease anymore
-    unsigned int delay = 90*1000;          // In us, 1000us=1ms
+    unsigned int delay = 10*1000;          // In us, 1000us=1ms
     unsigned int delayInc = 2000;      // 2ms delay increment
     unsigned int iterations = 100;    // Number of readDataBlocks we will run
     unsigned int i;
@@ -3056,7 +3056,7 @@ void MainWindow::runInterfaceBoardTest()
             printf("Flushing failed, aborted!\n");
             break;
         }
-    } while ((bestTimePerCall - curTimePerCall >= delayInc/2000) &&  running);
+    } while ((bestTimePerCall >  curTimePerCall) &&  running);
     
     printf("Test with samplesPerDataBlock=%d\n", Rhd2000DataBlock::getSamplesPerDataBlock(usb3));
     printf("     acq time=%.3fms\n", 1000.0 * Rhd2000DataBlock::getSamplesPerDataBlock(usb3) * samplePeriod);
