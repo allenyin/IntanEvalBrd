@@ -40,3 +40,7 @@ To compile the modified interface software:
 1) Replace the `main.bit` file in `source/` with the appropriate ones from `bitfiles/` directory.
 
 2) Replace the `libokFrontpanel.so`, `okFrontPanelDLL.h`, and `okFrontPanelDLL.cpp` from the appropriate folder from `OpalKellyLibraryFiles/` folder. `XEM6010/` contains those for XEM6010-LX45 (unmodified Intan), `XEM6310/` contains those for XEM6310-LX150.
+
+**Additions for USB3**
+
+Detects whether the connected Opal Kelly board is LX-45 or LX-150. USB3 mode is used for LX-150
