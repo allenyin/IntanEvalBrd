@@ -11,13 +11,9 @@ Steps to compile on Ubuntu 14.04 (starting from fresh download from Intan), some
 
    This way the generated Makefile by qmake have the correct linker flags to find `okFrontPanel` and `libdl` libraries.
 
-4. In `RHD2000interface.pro` where it reads `QT += widges`, change it to read `QT += widgets multimedia`.
+4. Do `qmake-qt4`.
 
-5. Do `qmake-qt4`.
-
-6. In the generated Makefile, in the `CXXFLAGS`, add `-std=c++11` to allow C++11 features.
-
-7. In production systems, change the `-02` flag into `-03` for both `CXXFLAGS` and `CFLAGS` line in the Makefile.
+5. In production systems, change the `-02` flag into `-03` for both `CXXFLAGS` and `CFLAGS` line in the Makefile.
 
 Running `make` should now be successful.
 
